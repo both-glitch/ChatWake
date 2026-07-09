@@ -61,8 +61,9 @@ def api_groups():
     return jsonify([{"chat_id": g[0], "title": g[1]} for g in groups])
 
 
-@app.route("/api/groups/<int:chat_id>/members")
+@app.route("/api/groups/<chat_id>/members")
 def api_members(chat_id):
+    chat_id = int(chat_id)  # manually convert, since Flask's <int:> converter rejects negative numbers
     user_id = request.args.get("user_id", type=int)
     if not user_id or not is_group_owner(chat_id, user_id):
         return jsonify({"error": "not authorized"}), 403
