@@ -6,20 +6,68 @@
   <title>ChatWake</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    body { background:#12141c; color:#eef0f6; font-family:'Segoe UI',sans-serif; margin:0; padding:16px; }
-    h2, h3 { color:#ffb648; }
-    .card { background:#1c2030; border-radius:14px; padding:14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
-    .status-active { color:#3ddc97; }
-    .status-quiet { color:#ffb648; }
-    .status-ghosting { color:#ff5c72; }
-    button { background:#ffb648; color:#1c1408; border:none; border-radius:10px; padding:8px 14px; font-weight:bold; }
+    :root {
+      --bg: #12141c;
+      --card: #1c2030;
+      --card-hover: #242942;
+      --text: #eef0f6;
+      --subtext: #8b90a6;
+      --accent: #ffb648;
+      --accent-dim: #8a6a2f;
+      --active: #3ddc97;
+      --quiet: #ffb648;
+      --ghosting: #ff5c72;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      margin: 0; padding: 16px 16px 40px;
+    }
+    h2 { color: var(--accent); font-size: 22px; margin: 0 0 16px; display:flex; align-items:center; gap:8px; }
+    h3 { color: var(--text); font-size: 17px; margin: 0; }
+    .top-row { display:flex; align-items:center; justify-content:space-between; margin-bottom: 14px; }
+    .card {
+      background: var(--card); border-radius: 14px; padding: 14px 16px;
+      margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
+      transition: background .15s;
+    }
+    .card:active { background: var(--card-hover); }
+    .member-info { display:flex; flex-direction:column; gap:3px; }
+    .member-name { font-weight: 600; font-size: 14px; }
+    .status-row { display:flex; align-items:center; gap:5px; font-size: 12px; font-weight:600; }
+    .status-active { color: var(--active); }
+    .status-quiet { color: var(--quiet); }
+    .status-ghosting { color: var(--ghosting); }
+    .dot { font-size: 9px; }
+    .last-seen { font-size: 11px; color: var(--subtext); }
+    button {
+      border: none; border-radius: 10px; padding: 9px 14px;
+      font-weight: 700; font-size: 12px; cursor: pointer;
+    }
+    .btn-accent { background: var(--accent); color: #1c1408; }
+    .btn-card { background: var(--card); color: var(--text); }
+    .btn-ghost { background: var(--ghosting); color: #1c1408; }
+    .btn-quiet-action { background: var(--quiet); color: #1c1408; }
+    .bulk-row { display:flex; gap:8px; margin-bottom: 14px; }
+    .bulk-row button { flex: 1; font-size: 11px; padding: 10px 4px; }
+    .empty-msg { color: var(--subtext); font-size: 14px; margin-top: 20px; text-align:center; }
     #groups-view, #members-view { display:none; }
+    .toast {
+      position: fixed; bottom: 16px; left: 16px; right: 16px;
+      background: var(--card); color: var(--text); padding: 10px 14px;
+      border-radius: 10px; font-size: 13px; text-align:center;
+      opacity: 0; transition: opacity .2s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
   </style>
 </head>
 <body>
   <h2>⏰ ChatWake</h2>
+
   <div id="groups-view"></div>
   <div id="members-view"></div>
+  <div class="toast" id="toast"></div>
 
   <script>
     const tg = window.Telegram.WebApp;
@@ -27,46 +75,128 @@
     tg.expand();
 
     const userId = tg.initDataUnsafe?.user?.id;
+    let refreshTimer = null;
+    let currentChatId = null;
+    let currentTitle = null;
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 2200);
+    }
+
+    function timeAgo(isoLike) {
+      const then = new Date(isoLike.replace(" ", "T") + "Z");
+      const seconds = Math.floor((Date.now() - then.getTime()) / 1000);
+      if (seconds < 60) return `${seconds}s ago`;
+      if (seconds < 3600) return `${Math.floor(seconds/60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds/3600)}h ago`;
+      return `${Math.floor(seconds/86400)}d ago`;
+    }
 
     async function loadGroups() {
+      clearInterval(refreshTimer);
       const res = await fetch(`/api/groups?user_id=${userId}`);
       const groups = await res.json();
-      const view = document.getElementById("groups-view");
-      view.style.display = "block";
+      document.getElementById("groups-view").style.display = "block";
       document.getElementById("members-view").style.display = "none";
+      const view = document.getElementById("groups-view");
       view.innerHTML = groups.length
         ? groups.map(g => `
             <div class="card">
-              <span>💬 ${g.title}</span>
-              <button onclick="loadMembers(${g.chat_id}, '${g.title}')">Open →</button>
+              <span class="member-name">💬 ${g.title}</span>
+              <button class="btn-accent" onclick="openGroup(${g.chat_id}, '${g.title.replace(/'/g, "\\'")}')">Open →</button>
             </div>`).join("")
-        : "<p>No groups yet. Add the bot to a group to get started.</p>";
+        : `<div class="empty-msg">No groups yet.<br>Add the bot to a Telegram group to get started.</div>`;
     }
 
-    async function loadMembers(chatId, title) {
-      const res = await fetch(`/api/groups/${chatId}/members?user_id=${userId}`);
+    function openGroup(chatId, title) {
+      currentChatId = chatId;
+      currentTitle = title;
+      loadMembers();
+      refreshTimer = setInterval(loadMembers, 4000); // lightweight auto-refresh
+    }
+
+    function statusStyle(status) {
+      if (status === "active") return { cls: "status-active", label: "ACTIVE" };
+      if (status === "quiet") return { cls: "status-quiet", label: "QUIET" };
+      return { cls: "status-ghosting", label: "GHOSTING" };
+    }
+
+    function actionButton(chatId, username, status) {
+      if (status === "ghosting") {
+        return `<button class="btn-ghost" onclick="act('wakeup-single',${chatId},'${username}')">Wake Up</button>`;
+      }
+      if (status === "quiet") {
+        return `<button class="btn-quiet-action" onclick="act('nudge-single',${chatId},'${username}')">Nudge</button>`;
+      }
+      return "";
+    }
+
+    async function loadMembers() {
+      const res = await fetch(`/api/groups/${currentChatId}/members?user_id=${userId}`);
       const members = await res.json();
-      const view = document.getElementById("members-view");
+
       document.getElementById("groups-view").style.display = "none";
+      const view = document.getElementById("members-view");
       view.style.display = "block";
-      view.innerHTML = `<button onclick="loadGroups()">← Back</button><h3>${title}</h3>` + members.map(m => `
-        <div class="card">
-          <div>
-            <div>${m.name}</div>
-            <div class="status-${m.status}">${m.status.toUpperCase()}</div>
-          </div>
-          ${m.status === "ghosting" ? `<button onclick="act('wakeup',${chatId},'${m.username}')">Wake Up</button>` : ""}
-          ${m.status === "quiet" ? `<button onclick="act('nudge',${chatId},'${m.username}')">Nudge</button>` : ""}
-        </div>`).join("");
+
+      const memberHtml = members.length
+        ? members.map(m => {
+            const s = statusStyle(m.status);
+            return `
+              <div class="card">
+                <div class="member-info">
+                  <span class="member-name">${m.name}</span>
+                  <span class="status-row ${s.cls}"><span class="dot">●</span>${s.label}</span>
+                  <span class="last-seen">Last reply: ${timeAgo(m.last_seen)}</span>
+                </div>
+                ${actionButton(currentChatId, m.username, m.status)}
+              </div>`;
+          }).join("")
+        : `<div class="empty-msg">No members captured yet.<br>Have everyone send 1 message in the group.</div>`;
+
+      view.innerHTML = `
+        <div class="top-row">
+          <button class="btn-card" onclick="goBack()">← Back</button>
+          <h3>${currentTitle}</h3>
+          <span style="width:60px"></span>
+        </div>
+        <div class="bulk-row">
+          <button class="btn-ghost" onclick="act('wakeup-all',${currentChatId})">🔔 Wake All Ghosts</button>
+          <button class="btn-quiet-action" onclick="act('nudge-all',${currentChatId})">👀 Nudge All Quiet</button>
+        </div>
+        ${memberHtml}
+      `;
+    }
+
+    function goBack() {
+      clearInterval(refreshTimer);
+      loadGroups();
     }
 
     async function act(type, chatId, username) {
-      await fetch(`/api/${type}`, {
+      let endpoint, body;
+      if (type === "wakeup-single") { endpoint = "/api/wakeup"; body = { chat_id: chatId, username, user_id: userId }; }
+      if (type === "nudge-single")  { endpoint = "/api/nudge";  body = { chat_id: chatId, username, user_id: userId }; }
+      if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
+      if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, username, user_id: userId }),
+        body: JSON.stringify(body),
       });
+      const result = await res.json();
       tg.HapticFeedback.notificationOccurred("success");
+
+      if (type === "wakeup-single") showToast(`Woke up @${username}`);
+      if (type === "nudge-single")  showToast(`Nudged @${username}`);
+      if (type === "wakeup-all")    showToast(result.count ? `Woke up ${result.count} member(s)` : "No one is ghosting");
+      if (type === "nudge-all")     showToast(result.count ? `Nudged ${result.count} member(s)` : "No one is quiet");
+
+      loadMembers();
     }
 
     loadGroups();

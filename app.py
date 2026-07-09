@@ -76,24 +76,30 @@ def api_members(chat_id):
     ])
 
 
-@app.route("/api/wakeup", methods=["POST"])
-def api_wakeup():
+@app.route("/api/wakeup-all", methods=["POST"])
+def api_wakeup_all():
     data = request.json
-    chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
+    chat_id, user_id = data["chat_id"], data["user_id"]
     if not is_group_owner(chat_id, user_id):
         return jsonify({"error": "not authorized"}), 403
-    send_wake_up(chat_id, username)
-    return jsonify({"ok": True})
+    members = get_teammates_by_group(chat_id)
+    ghosts = [m for m in members if m[6] == "ghosting"]
+    for m in ghosts:
+        send_wake_up(chat_id, m[4])
+    return jsonify({"ok": True, "count": len(ghosts)})
 
 
-@app.route("/api/nudge", methods=["POST"])
-def api_nudge():
+@app.route("/api/nudge-all", methods=["POST"])
+def api_nudge_all():
     data = request.json
-    chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
+    chat_id, user_id = data["chat_id"], data["user_id"]
     if not is_group_owner(chat_id, user_id):
         return jsonify({"error": "not authorized"}), 403
-    send_anonymous_nudge(chat_id, username)
-    return jsonify({"ok": True})
+    members = get_teammates_by_group(chat_id)
+    quiet = [m for m in members if m[6] == "quiet"]
+    for m in quiet:
+        send_anonymous_nudge(chat_id, m[4])
+    return jsonify({"ok": True, "count": len(quiet)})
 
 
 if __name__ == "__main__":
