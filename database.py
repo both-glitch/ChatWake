@@ -12,12 +12,13 @@ def create_tables():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS groups (
-            chat_id INTEGER PRIMARY KEY,
-            title TEXT,
-            folder_id INTEGER DEFAULT NULL
-        )
-    """)
+    CREATE TABLE IF NOT EXISTS groups (
+        chat_id INTEGER PRIMARY KEY,
+        title TEXT,
+        owner_id INTEGER,
+        folder_id INTEGER DEFAULT NULL
+    )
+""")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teammates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,11 +48,13 @@ def create_tables():
     conn.commit()
     conn.close()
 
-def save_group(chat_id, title):
+def save_group(chat_id, title, owner_id=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO groups (chat_id, title) VALUES (?, ?)", (chat_id, title))
+    cursor.execute("INSERT OR IGNORE INTO groups (chat_id, title, owner_id) VALUES (?, ?, ?)", (chat_id, title, owner_id))
     cursor.execute("UPDATE groups SET title = ? WHERE chat_id = ?", (title, chat_id))
+    if owner_id is not None:
+        cursor.execute("UPDATE groups SET owner_id = ? WHERE chat_id = ? AND owner_id IS NULL", (owner_id, chat_id))
     conn.commit()
     conn.close()
 
@@ -181,3 +184,20 @@ def remove_group_from_folder(chat_id, folder_id):
     cursor.execute("DELETE FROM folder_maps WHERE chat_id = ? AND folder_id = ?", (chat_id, folder_id))
     conn.commit()
     conn.close()
+    
+def get_groups_by_owner(owner_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, title FROM groups WHERE owner_id = ?", (owner_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def is_group_owner(chat_id, user_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT owner_id FROM groups WHERE chat_id = ?", (chat_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None and row[0] == user_id

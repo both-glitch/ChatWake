@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatWake</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body { background:#12141c; color:#eef0f6; font-family:'Segoe UI',sans-serif; margin:0; padding:16px; }
+    h2, h3 { color:#ffb648; }
+    .card { background:#1c2030; border-radius:14px; padding:14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
+    .status-active { color:#3ddc97; }
+    .status-quiet { color:#ffb648; }
+    .status-ghosting { color:#ff5c72; }
+    button { background:#ffb648; color:#1c1408; border:none; border-radius:10px; padding:8px 14px; font-weight:bold; }
+    #groups-view, #members-view { display:none; }
+  </style>
+</head>
+<body>
+  <h2>⏰ ChatWake</h2>
+  <div id="groups-view"></div>
+  <div id="members-view"></div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+
+    const userId = tg.initDataUnsafe?.user?.id;
+
+    async function loadGroups() {
+      const res = await fetch(`/api/groups?user_id=${userId}`);
+      const groups = await res.json();
+      const view = document.getElementById("groups-view");
+      view.style.display = "block";
+      document.getElementById("members-view").style.display = "none";
+      view.innerHTML = groups.length
+        ? groups.map(g => `
+            <div class="card">
+              <span>💬 ${g.title}</span>
+              <button onclick="loadMembers(${g.chat_id}, '${g.title}')">Open →</button>
+            </div>`).join("")
+        : "<p>No groups yet. Add the bot to a group to get started.</p>";
+    }
+
+    async function loadMembers(chatId, title) {
+      const res = await fetch(`/api/groups/${chatId}/members?user_id=${userId}`);
+      const members = await res.json();
+      const view = document.getElementById("members-view");
+      document.getElementById("groups-view").style.display = "none";
+      view.style.display = "block";
+      view.innerHTML = `<button onclick="loadGroups()">← Back</button><h3>${title}</h3>` + members.map(m => `
+        <div class="card">
+          <div>
+            <div>${m.name}</div>
+            <div class="status-${m.status}">${m.status.toUpperCase()}</div>
+          </div>
+          ${m.status === "ghosting" ? `<button onclick="act('wakeup',${chatId},'${m.username}')">Wake Up</button>` : ""}
+          ${m.status === "quiet" ? `<button onclick="act('nudge',${chatId},'${m.username}')">Nudge</button>` : ""}
+        </div>`).join("");
+    }
+
+    async function act(type, chatId, username) {
+      await fetch(`/api/${type}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, username, user_id: userId }),
+      });
+      tg.HapticFeedback.notificationOccurred("success");
+    }
+
+    loadGroups();
+  </script>
+</body>
+</html>
