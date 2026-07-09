@@ -55,16 +55,25 @@ def handle_message(message):
 # ---------- ACTIONS TRIGGERED FROM THE UI ----------
 
 def send_wake_up(chat_id, username):
-    bot.send_message(chat_id, f"⏰ WAKE UP @{username}! You have been inactive!")
-    print(f"Wake up sent to @{username} in {chat_id}")
+    """Publicly mention someone in their group to wake them up."""
+    try:
+        bot.send_message(chat_id, f"WAKE UP @{username}! You have been inactive.")
+        print(f"Wake up sent to @{username} in {chat_id}")
+        return True
+    except Exception as e:
+        print(f"FAILED to send wake up to @{username} in {chat_id}: {e}")
+        return False
 
 
 def send_anonymous_nudge(chat_id, username):
-    bot.send_message(
-        chat_id,
-        f"👀 Someone in the group noticed @{username} has been quiet for a while..."
-    )
-    print(f"Anonymous nudge sent to @{username} in {chat_id}")
+    """Send a nudge that doesn't reveal who triggered it."""
+    try:
+        bot.send_message(chat_id, f"Someone in the group noticed @{username} has been quiet for a while.")
+        print(f"Anonymous nudge sent to @{username} in {chat_id}")
+        return True
+    except Exception as e:
+        print(f"FAILED to send nudge to @{username} in {chat_id}: {e}")
+        return False
 
 
 # NOTE: no bot.polling() and no background thread here anymore.

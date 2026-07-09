@@ -13,7 +13,6 @@
       --text: #eef0f6;
       --subtext: #8b90a6;
       --accent: #ffb648;
-      --accent-dim: #8a6a2f;
       --active: #3ddc97;
       --quiet: #ffb648;
       --ghosting: #ff5c72;
@@ -22,48 +21,52 @@
     body {
       background: var(--bg); color: var(--text);
       font-family: 'Segoe UI', system-ui, sans-serif;
-      margin: 0; padding: 16px 16px 40px;
+      margin: 0; padding: 18px 16px 40px;
     }
-    h2 { color: var(--accent); font-size: 22px; margin: 0 0 16px; display:flex; align-items:center; gap:8px; }
-    h3 { color: var(--text); font-size: 17px; margin: 0; }
-    .top-row { display:flex; align-items:center; justify-content:space-between; margin-bottom: 14px; }
+    h2 {
+      color: var(--text); font-size: 19px; font-weight: 700;
+      margin: 0 0 18px; letter-spacing: 0.2px;
+    }
+    h2 .accent { color: var(--accent); }
+    h3 { color: var(--text); font-size: 16px; margin: 0; font-weight: 600; }
+    .top-row { display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px; }
     .card {
-      background: var(--card); border-radius: 14px; padding: 14px 16px;
-      margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
-      transition: background .15s;
+      background: var(--card); border-radius: 12px; padding: 14px 16px;
+      margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
     }
-    .card:active { background: var(--card-hover); }
-    .member-info { display:flex; flex-direction:column; gap:3px; }
+    .member-info { display:flex; flex-direction:column; gap:4px; }
     .member-name { font-weight: 600; font-size: 14px; }
-    .status-row { display:flex; align-items:center; gap:5px; font-size: 12px; font-weight:600; }
+    .status-row { display:flex; align-items:center; gap:6px; font-size: 11px; font-weight:600; letter-spacing: 0.3px; }
     .status-active { color: var(--active); }
     .status-quiet { color: var(--quiet); }
     .status-ghosting { color: var(--ghosting); }
-    .dot { font-size: 9px; }
+    .dot { width:6px; height:6px; border-radius:50%; display:inline-block; background: currentColor; }
     .last-seen { font-size: 11px; color: var(--subtext); }
     button {
-      border: none; border-radius: 10px; padding: 9px 14px;
-      font-weight: 700; font-size: 12px; cursor: pointer;
+      border: none; border-radius: 8px; padding: 9px 14px;
+      font-weight: 600; font-size: 12px; cursor: pointer;
     }
     .btn-accent { background: var(--accent); color: #1c1408; }
-    .btn-card { background: var(--card); color: var(--text); }
+    .btn-card { background: var(--card); color: var(--text); border: 1px solid #2c3148; }
     .btn-ghost { background: var(--ghosting); color: #1c1408; }
     .btn-quiet-action { background: var(--quiet); color: #1c1408; }
-    .bulk-row { display:flex; gap:8px; margin-bottom: 14px; }
-    .bulk-row button { flex: 1; font-size: 11px; padding: 10px 4px; }
-    .empty-msg { color: var(--subtext); font-size: 14px; margin-top: 20px; text-align:center; }
+    .bulk-row { display:flex; gap:8px; margin-bottom: 16px; }
+    .bulk-row button { flex: 1; font-size: 11.5px; padding: 10px 4px; }
+    .empty-msg { color: var(--subtext); font-size: 14px; margin-top: 24px; text-align:center; line-height: 1.5; }
     #groups-view, #members-view { display:none; }
     .toast {
       position: fixed; bottom: 16px; left: 16px; right: 16px;
-      background: var(--card); color: var(--text); padding: 10px 14px;
+      background: var(--card); color: var(--text); padding: 11px 14px;
       border-radius: 10px; font-size: 13px; text-align:center;
       opacity: 0; transition: opacity .2s; pointer-events: none;
+      border: 1px solid #2c3148;
     }
     .toast.show { opacity: 1; }
+    .toast.error { border-color: var(--ghosting); color: var(--ghosting); }
   </style>
 </head>
 <body>
-  <h2>⏰ ChatWake</h2>
+  <h2>ChatWake <span class="accent">·</span> Group Activity</h2>
 
   <div id="groups-view"></div>
   <div id="members-view"></div>
@@ -79,24 +82,35 @@
     let currentChatId = null;
     let currentTitle = null;
 
-    function showToast(msg) {
+    // Cache of rendered rows so refreshes only touch what changed,
+    // instead of re-rendering (and re-fetching relative time strings) every cycle.
+    let memberRowCache = {};
+
+    function showToast(msg, isError) {
       const t = document.getElementById("toast");
       t.textContent = msg;
-      t.classList.add("show");
-      setTimeout(() => t.classList.remove("show"), 2200);
+      t.className = "toast show" + (isError ? " error" : "");
+      setTimeout(() => t.classList.remove("show"), 2400);
     }
 
     function timeAgo(isoLike) {
       const then = new Date(isoLike.replace(" ", "T") + "Z");
       const seconds = Math.floor((Date.now() - then.getTime()) / 1000);
       if (seconds < 60) return `${seconds}s ago`;
-      if (seconds < 3600) return `${Math.floor(seconds/60)}m ago`;
-      if (seconds < 86400) return `${Math.floor(seconds/3600)}h ago`;
-      return `${Math.floor(seconds/86400)}d ago`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+
+    function statusStyle(status) {
+      if (status === "active") return { cls: "status-active", label: "Active" };
+      if (status === "quiet") return { cls: "status-quiet", label: "Quiet" };
+      return { cls: "status-ghosting", label: "Ghosting" };
     }
 
     async function loadGroups() {
       clearInterval(refreshTimer);
+      memberRowCache = {};
       const res = await fetch(`/api/groups?user_id=${userId}`);
       const groups = await res.json();
       document.getElementById("groups-view").style.display = "block";
@@ -105,8 +119,8 @@
       view.innerHTML = groups.length
         ? groups.map(g => `
             <div class="card">
-              <span class="member-name">💬 ${g.title}</span>
-              <button class="btn-accent" onclick="openGroup(${g.chat_id}, '${g.title.replace(/'/g, "\\'")}')">Open →</button>
+              <span class="member-name">${g.title}</span>
+              <button class="btn-accent" onclick="openGroup(${g.chat_id}, '${g.title.replace(/'/g, "\\'")}')">Open</button>
             </div>`).join("")
         : `<div class="empty-msg">No groups yet.<br>Add the bot to a Telegram group to get started.</div>`;
     }
@@ -114,17 +128,32 @@
     function openGroup(chatId, title) {
       currentChatId = chatId;
       currentTitle = title;
-      loadMembers();
-      refreshTimer = setInterval(loadMembers, 4000); // lightweight auto-refresh
+      memberRowCache = {};
+      renderShell();
+      loadMembers(true);
+      // Slower interval, and each cycle only patches what changed -- lighter on data.
+      refreshTimer = setInterval(() => loadMembers(false), 8000);
     }
 
-    function statusStyle(status) {
-      if (status === "active") return { cls: "status-active", label: "ACTIVE" };
-      if (status === "quiet") return { cls: "status-quiet", label: "QUIET" };
-      return { cls: "status-ghosting", label: "GHOSTING" };
+    function renderShell() {
+      document.getElementById("groups-view").style.display = "none";
+      const view = document.getElementById("members-view");
+      view.style.display = "block";
+      view.innerHTML = `
+        <div class="top-row">
+          <button class="btn-card" onclick="goBack()">Back</button>
+          <h3>${currentTitle}</h3>
+          <span style="width:52px"></span>
+        </div>
+        <div class="bulk-row">
+          <button class="btn-ghost" onclick="act('wakeup-all',${currentChatId})">Wake All Ghosts</button>
+          <button class="btn-quiet-action" onclick="act('nudge-all',${currentChatId})">Nudge All Quiet</button>
+        </div>
+        <div id="member-list"></div>
+      `;
     }
 
-    function actionButton(chatId, username, status) {
+    function actionButtonHtml(chatId, username, status) {
       if (status === "ghosting") {
         return `<button class="btn-ghost" onclick="act('wakeup-single',${chatId},'${username}')">Wake Up</button>`;
       }
@@ -134,41 +163,59 @@
       return "";
     }
 
-    async function loadMembers() {
+    async function loadMembers(isInitial) {
       const res = await fetch(`/api/groups/${currentChatId}/members?user_id=${userId}`);
       const members = await res.json();
+      const list = document.getElementById("member-list");
+      if (!list) return;
 
-      document.getElementById("groups-view").style.display = "none";
-      const view = document.getElementById("members-view");
-      view.style.display = "block";
+      if (!members.length) {
+        list.innerHTML = `<div class="empty-msg">No members captured yet.<br>Have everyone send 1 message in the group.</div>`;
+        memberRowCache = {};
+        return;
+      }
 
-      const memberHtml = members.length
-        ? members.map(m => {
-            const s = statusStyle(m.status);
-            return `
-              <div class="card">
-                <div class="member-info">
-                  <span class="member-name">${m.name}</span>
-                  <span class="status-row ${s.cls}"><span class="dot">●</span>${s.label}</span>
-                  <span class="last-seen">Last reply: ${timeAgo(m.last_seen)}</span>
-                </div>
-                ${actionButton(currentChatId, m.username, m.status)}
-              </div>`;
-          }).join("")
-        : `<div class="empty-msg">No members captured yet.<br>Have everyone send 1 message in the group.</div>`;
+      const currentIds = new Set(members.map(m => m.telegram_id));
+      // Remove rows for members no longer present
+      Object.keys(memberRowCache).forEach(id => {
+        if (!currentIds.has(Number(id))) {
+          memberRowCache[id].el.remove();
+          delete memberRowCache[id];
+        }
+      });
 
-      view.innerHTML = `
-        <div class="top-row">
-          <button class="btn-card" onclick="goBack()">← Back</button>
-          <h3>${currentTitle}</h3>
-          <span style="width:60px"></span>
-        </div>
-        <div class="bulk-row">
-          <button class="btn-ghost" onclick="act('wakeup-all',${currentChatId})">🔔 Wake All Ghosts</button>
-          <button class="btn-quiet-action" onclick="act('nudge-all',${currentChatId})">👀 Nudge All Quiet</button>
-        </div>
-        ${memberHtml}
-      `;
+      members.forEach(m => {
+        const cached = memberRowCache[m.telegram_id];
+        const s = statusStyle(m.status);
+
+        if (!cached) {
+          // Build this row once
+          const el = document.createElement("div");
+          el.className = "card";
+          el.innerHTML = `
+            <div class="member-info">
+              <span class="member-name">${m.name}</span>
+              <span class="status-row ${s.cls}"><span class="dot"></span>${s.label}</span>
+              <span class="last-seen">Last reply: ${timeAgo(m.last_seen)}</span>
+            </div>
+            <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status)}</span>
+          `;
+          list.appendChild(el);
+          memberRowCache[m.telegram_id] = {
+            el,
+            statusRow: el.querySelector(".status-row"),
+            actionSlot: el.querySelector(".action-slot"),
+            lastStatus: m.status,
+          };
+        } else if (cached.lastStatus !== m.status) {
+          // Only touch the DOM if status actually changed -- avoids
+          // needless re-render (and re-computed "time ago") every cycle.
+          cached.statusRow.className = `status-row ${s.cls}`;
+          cached.statusRow.innerHTML = `<span class="dot"></span>${s.label}`;
+          cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status);
+          cached.lastStatus = m.status;
+        }
+      });
     }
 
     function goBack() {
@@ -183,20 +230,29 @@
       if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
       if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
 
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const result = await res.json();
-      tg.HapticFeedback.notificationOccurred("success");
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const result = await res.json();
 
-      if (type === "wakeup-single") showToast(`Woke up @${username}`);
-      if (type === "nudge-single")  showToast(`Nudged @${username}`);
-      if (type === "wakeup-all")    showToast(result.count ? `Woke up ${result.count} member(s)` : "No one is ghosting");
-      if (type === "nudge-all")     showToast(result.count ? `Nudged ${result.count} member(s)` : "No one is quiet");
+        if (!res.ok || result.ok === false) {
+          showToast(result.error || "Action failed. Check bot permissions.", true);
+          return;
+        }
 
-      loadMembers();
+        tg.HapticFeedback.notificationOccurred("success");
+        if (type === "wakeup-single") showToast(`Woke up ${username}`);
+        if (type === "nudge-single")  showToast(`Nudged ${username}`);
+        if (type === "wakeup-all")    showToast(result.count ? `Woke up ${result.count} member(s)` : "No one is ghosting");
+        if (type === "nudge-all")     showToast(result.count ? `Nudged ${result.count} member(s)` : "No one is quiet");
+
+        loadMembers(false);
+      } catch (e) {
+        showToast("Network error -- action may not have sent.", true);
+      }
     }
 
     loadGroups();
