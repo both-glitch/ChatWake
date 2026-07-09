@@ -63,10 +63,11 @@ def api_groups():
 
 @app.route("/api/groups/<chat_id>/members")
 def api_members(chat_id):
-    chat_id = int(chat_id)  # manually convert, since Flask's <int:> converter rejects negative numbers
+    chat_id = int(chat_id)
     user_id = request.args.get("user_id", type=int)
     if not user_id or not is_group_owner(chat_id, user_id):
         return jsonify({"error": "not authorized"}), 403
+    refresh_all_statuses()  # recalculate every time someone checks, not just on new messages
     members = get_teammates_by_group(chat_id)
     return jsonify([
         {
@@ -75,6 +76,24 @@ def api_members(chat_id):
         } for m in members
     ])
 
+@app.route("/api/wakeup", methods=["POST"])
+def api_wakeup():
+    data = request.json
+    chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
+    if not is_group_owner(chat_id, user_id):
+        return jsonify({"error": "not authorized"}), 403
+    success = send_wake_up(chat_id, username)
+    return jsonify({"ok": success})
+
+
+@app.route("/api/nudge", methods=["POST"])
+def api_nudge():
+    data = request.json
+    chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
+    if not is_group_owner(chat_id, user_id):
+        return jsonify({"error": "not authorized"}), 403
+    success = send_anonymous_nudge(chat_id, username)
+    return jsonify({"ok": success})
 
 @app.route("/api/wakeup-all", methods=["POST"])
 def api_wakeup_all():
