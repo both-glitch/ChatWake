@@ -93,13 +93,12 @@
       setTimeout(() => t.classList.remove("show"), 2400);
     }
 
-    function timeAgo(isoLike) {
-      const then = new Date(isoLike.replace(" ", "T") + "Z");
-      const seconds = Math.floor((Date.now() - then.getTime()) / 1000);
-      if (seconds < 60) return `${seconds}s ago`;
-      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-      return `${Math.floor(seconds / 86400)}d ago`;
+    function formatLastSeen(isoLike) {
+      const d = new Date(isoLike.replace(" ", "T") + "Z");
+      return d.toLocaleString(undefined, {
+        month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit"
+      });
     }
 
     function statusStyle(status) {
@@ -184,39 +183,43 @@
         }
       });
 
-      members.forEach(m => {
-        const cached = memberRowCache[m.telegram_id];
-        const s = statusStyle(m.status);
+    members.forEach(m => {
+      const cached = memberRowCache[m.telegram_id];
+      const s = statusStyle(m.status);
 
-        if (!cached) {
-          // Build this row once
-          const el = document.createElement("div");
-          el.className = "card";
-          el.innerHTML = `
-            <div class="member-info">
-              <span class="member-name">${m.name}</span>
-              <span class="status-row ${s.cls}"><span class="dot"></span>${s.label}</span>
-              <span class="last-seen">Last reply: ${timeAgo(m.last_seen)}</span>
-            </div>
-            <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status)}</span>
-          `;
-          list.appendChild(el);
-          memberRowCache[m.telegram_id] = {
-            el,
-            statusRow: el.querySelector(".status-row"),
-            actionSlot: el.querySelector(".action-slot"),
-            lastStatus: m.status,
-          };
-        } else if (cached.lastStatus !== m.status) {
-          // Only touch the DOM if status actually changed -- avoids
-          // needless re-render (and re-computed "time ago") every cycle.
+      if (!cached) {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+          <div class="member-info">
+            <span class="member-name">${m.name}</span>
+            <span class="status-row ${s.cls}"><span class="dot"></span>${s.label}</span>
+            <span class="last-seen">Last reply: ${formatLastSeen(m.last_seen)}</span>
+          </div>
+          <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status)}</span>
+        `;
+        list.appendChild(el);
+        memberRowCache[m.telegram_id] = {
+          el,
+          statusRow: el.querySelector(".status-row"),
+          actionSlot: el.querySelector(".action-slot"),
+          lastSeenEl: el.querySelector(".last-seen"),
+          lastStatus: m.status,
+          lastSeenValue: m.last_seen,
+        };
+      } else {
+        if (cached.lastStatus !== m.status) {
           cached.statusRow.className = `status-row ${s.cls}`;
           cached.statusRow.innerHTML = `<span class="dot"></span>${s.label}`;
           cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status);
           cached.lastStatus = m.status;
         }
-      });
-    }
+        if (cached.lastSeenValue !== m.last_seen) {
+          cached.lastSeenEl.textContent = `Last reply: ${formatLastSeen(m.last_seen)}`;
+          cached.lastSeenValue = m.last_seen;
+        }
+      }
+    });
 
     function goBack() {
       clearInterval(refreshTimer);
