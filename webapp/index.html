@@ -100,8 +100,6 @@
     let currentChatId = null;
     let currentTitle = null;
 
-    // Cache of rendered rows so refreshes only touch what changed,
-    // instead of re-rendering (and re-fetching relative time strings) every cycle.
     let memberRowCache = {};
 
     function showToast(msg, isError) {
@@ -114,7 +112,8 @@
     function formatLastSeen(isoLike) {
       const d = new Date(isoLike.replace(" ", "T") + "Z");
       return d.toLocaleString(undefined, {
-        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+        month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit"
       });
     }
 
@@ -124,25 +123,13 @@
       return { cls: "status-ghosting", label: "Ghosting" };
     }
 
-    function showLoading(msg) {
-      document.getElementById("groups-view").style.display = "block";
-      document.getElementById("members-view").style.display = "none";
-      document.getElementById("groups-view").innerHTML =
-        `<div class="empty-msg">${msg}</div>`;
-    }
-
     async function loadGroups() {
       clearInterval(refreshTimer);
       memberRowCache = {};
-      showLoading("Connecting to server\u2026<br><span style='font-size:11px'>This can take up to a minute if the server was asleep.</span>");
-      let res;
-      try {
-        res = await fetch(`/api/groups?user_id=${userId}`);
-      } catch (e) {
-        showLoading("Couldn't reach the server. Pull down or reopen to retry.");
-        return;
-      }
+      const res = await fetch(`/api/groups?user_id=${userId}`);
       const groups = await res.json();
+      document.getElementById("groups-view").style.display = "block";
+      document.getElementById("members-view").style.display = "none";
       const view = document.getElementById("groups-view");
       view.innerHTML = groups.length
         ? groups.map(g => `
@@ -159,7 +146,6 @@
       memberRowCache = {};
       renderShell();
       loadMembers(true);
-      // Slower interval, and each cycle only patches what changed -- lighter on data.
       refreshTimer = setInterval(() => loadMembers(false), 8000);
     }
 
@@ -204,7 +190,6 @@
       }
 
       const currentIds = new Set(members.map(m => m.telegram_id));
-      // Remove rows for members no longer present
       Object.keys(memberRowCache).forEach(id => {
         if (!currentIds.has(Number(id))) {
           memberRowCache[id].el.remove();
@@ -217,14 +202,16 @@
         const s = statusStyle(m.status);
 
         if (!cached) {
-          // Build this row once
           const el = document.createElement("div");
           el.className = "card";
           el.innerHTML = `
-            <div class="member-info">
-              <span class="member-name">${m.name}</span>
-              <span class="status-row ${s.cls}"><span class="dot"></span>${s.label}</span>
-              <span class="last-seen">Last reply: ${timeAgo(m.last_seen)}</span>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 22px; color: var(--subtext);">○</span>
+              <div class="member-info">
+                <span class="member-name">${m.name}</span>
+                <span class="status-row ${s.cls}"><span class="dot"></span>${s.label}</span>
+                <span class="last-seen">Last reply: ${formatLastSeen(m.last_seen)}</span>
+              </div>
             </div>
             <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status)}</span>
           `;
@@ -233,15 +220,21 @@
             el,
             statusRow: el.querySelector(".status-row"),
             actionSlot: el.querySelector(".action-slot"),
+            lastSeenEl: el.querySelector(".last-seen"),
             lastStatus: m.status,
+            lastSeenValue: m.last_seen,
           };
-        } else if (cached.lastStatus !== m.status) {
-          // Only touch the DOM if status actually changed -- avoids
-          // needless re-render (and re-computed "time ago") every cycle.
-          cached.statusRow.className = `status-row ${s.cls}`;
-          cached.statusRow.innerHTML = `<span class="dot"></span>${s.label}`;
-          cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status);
-          cached.lastStatus = m.status;
+        } else {
+          if (cached.lastStatus !== m.status) {
+            cached.statusRow.className = `status-row ${s.cls}`;
+            cached.statusRow.innerHTML = `<span class="dot"></span>${s.label}`;
+            cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status);
+            cached.lastStatus = m.status;
+          }
+          if (cached.lastSeenValue !== m.last_seen) {
+            cached.lastSeenEl.textContent = `Last reply: ${formatLastSeen(m.last_seen)}`;
+            cached.lastSeenValue = m.last_seen;
+          }
         }
       });
     }
@@ -255,8 +248,8 @@
       let endpoint, body;
       if (type === "wakeup-single") { endpoint = "/api/wakeup"; body = { chat_id: chatId, username, user_id: userId }; }
       if (type === "nudge-single")  { endpoint = "/api/nudge";  body = { chat_id: chatId, username, user_id: userId }; }
-      if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
-      if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
+      if (type === "wakeup-all")     { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
+      if (type === "nudge-all")      { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
 
       try {
         const res = await fetch(endpoint, {
@@ -274,8 +267,8 @@
         tg.HapticFeedback.notificationOccurred("success");
         if (type === "wakeup-single") showToast(`Woke up ${username}`);
         if (type === "nudge-single")  showToast(`Nudged ${username}`);
-        if (type === "wakeup-all")    showToast(result.count ? `Woke up ${result.count} member(s)` : "No one is ghosting");
-        if (type === "nudge-all")     showToast(result.count ? `Nudged ${result.count} member(s)` : "No one is quiet");
+        if (type === "wakeup-all")    showToast(result.count ? `Woke up ghosting member(s)` : "No one is ghosting");
+        if (type === "nudge-all")     showToast(result.count ? `Nudged quiet member(s)` : "No one is quiet");
 
         loadMembers(false);
       } catch (e) {
