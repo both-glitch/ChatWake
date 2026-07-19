@@ -129,7 +129,10 @@
 <body>
   <div class="header-row">
     <h2>ChatWake <span class="accent">·</span> Group Activity</h2>
-    <div class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</div>
+    <div style="display:flex; gap:8px;">
+      <div class="theme-toggle" id="invite-toggle" onclick="toggleInvitePanel()" style="display:none;">+</div>
+      <div class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</div>
+    </div>
   </div>
 
   <div id="invitations-view"></div>
@@ -145,7 +148,7 @@
     const currentUser = tg.initDataUnsafe?.user || {};
     const userId = currentUser.id;
     const myUsername = (currentUser.username || "").toLowerCase();
-    const BOT_USERNAME = "Group_Productivitybot";
+    const BOT_USERNAME = "YOUR_BOT_USERNAME"; // set this to your actual bot's @username, no @
 
     let refreshTimer = null;
     let currentChatId = null;
@@ -251,6 +254,7 @@
     async function loadGroups() {
       clearInterval(refreshTimer);
       memberRowCache = {};
+      document.getElementById("invite-toggle").style.display = "none";
       const res = await fetch(`/api/groups?user_id=${userId}`);
       const groups = await res.json();
       document.getElementById("groups-view").style.display = "block";
@@ -279,6 +283,7 @@
 
     function renderShell() {
       document.getElementById("groups-view").style.display = "none";
+      document.getElementById("invite-toggle").style.display = "flex";
       const view = document.getElementById("members-view");
       view.style.display = "block";
       view.innerHTML = `
@@ -291,7 +296,7 @@
           <button class="btn-ghost" onclick="act('wakeup-all',${currentChatId}, null, this)">Wake All Ghosts</button>
           <button class="btn-quiet-action" onclick="act('nudge-all',${currentChatId}, null, this)">Nudge All Quiet</button>
         </div>
-        <div class="card" style="flex-direction:column; align-items:stretch;">
+        <div class="card" id="invite-panel" style="flex-direction:column; align-items:stretch; display:none;">
           <h4>Invite someone to help</h4>
           <div class="invite-row">
             <input type="text" id="invite-username-input" placeholder="@username" />
@@ -301,6 +306,14 @@
         </div>
         <div id="member-list"></div>
       `;
+    }
+
+    function toggleInvitePanel() {
+      const panel = document.getElementById("invite-panel");
+      if (!panel) return;
+      const isOpen = panel.style.display === "flex";
+      panel.style.display = isOpen ? "none" : "flex";
+      document.getElementById("invite-toggle").textContent = isOpen ? "+" : "×";
     }
 
     async function sendInvite() {
@@ -403,6 +416,8 @@
 
     function goBack() {
       clearInterval(refreshTimer);
+      document.getElementById("invite-toggle").style.display = "none";
+      document.getElementById("invite-toggle").textContent = "+";
       loadGroups();
     }
 

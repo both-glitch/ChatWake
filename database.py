@@ -23,6 +23,8 @@ def create_tables():
             folder_id INTEGER DEFAULT NULL
         )
     """)
+    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS quiet_limit INTEGER DEFAULT 30")
+    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS ghost_limit INTEGER DEFAULT 60")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teammates (
             id SERIAL PRIMARY KEY,
@@ -130,6 +132,17 @@ def get_groups_by_owner(owner_id):
     conn.close()
     return rows
 
+def is_username_in_group(chat_id, username):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM teammates WHERE chat_id = %s AND LOWER(username) = %s",
+        (chat_id, username.lower())
+    )
+    exists = cursor.fetchone() is not None
+    cursor.close()
+    conn.close()
+    return exists
 
 def is_group_owner(chat_id, user_id):
     conn = get_conn()
@@ -320,3 +333,94 @@ def record_action(chat_id, username):
     conn.commit()
     cursor.close()
     conn.close()
+
+def is_authorized(chat_id, user_id):
+    """True if this user owns the group OR has accepted collaborator access."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT owner_id FROM groups WHERE chat_id = %s", (chat_id,))
+    row = cursor.fetchone()
+    if row is not None and row[0] == user_id:
+        cursor.close()
+        conn.close()
+        return True
+    cursor.execute(
+        "SELECT 1 FROM group_access WHERE chat_id = %s AND user_id = %s",
+        (chat_id, user_id)
+    )
+    has_access = cursor.fetchone() is not None
+    cursor.close()
+    conn.close()
+    return has_access
+
+
+def get_groups_for_user(user_id):
+    """Groups this user owns OR has accepted access to, tagged with their role."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT chat_id, title, 'owner' AS role FROM groups WHERE owner_id = %s
+        UNION
+        SELECT g.chat_id, g.title, 'collaborator' AS role
+        FROM group_access a JOIN groups g ON a.chat_id = g.chat_id
+        WHERE a.user_id = %s
+    """, (user_id, user_id))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def create_invitation(chat_id, invited_username, invited_by):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO invitations (chat_id, invited_username, invited_by, status)
+        VALUES (%s, %s, %s, 'pending')
+    """, (chat_id, invited_username.lstrip("@").lower(), invited_by))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_pending_invitations_for_username(username):
+    """Called when a user opens the Mini App -- checks if anyone invited their @username."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT i.id, i.chat_id, g.title, i.invited_by
+        FROM invitations i
+        JOIN groups g ON i.chat_id = g.chat_id
+        WHERE i.invited_username = %s AND i.status = 'pending'
+    """, (username.lower(),))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def respond_invitation(invitation_id, user_id, accept):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, status FROM invitations WHERE id = %s", (invitation_id,))
+    row = cursor.fetchone()
+    if row is None or row[1] != 'pending':
+        cursor.close()
+        conn.close()
+        return False
+
+    chat_id = row[0]
+    new_status = 'accepted' if accept else 'declined'
+    cursor.execute("UPDATE invitations SET status = %s WHERE id = %s", (new_status, invitation_id))
+
+    if accept:
+        cursor.execute("""
+            INSERT INTO group_access (chat_id, user_id, role)
+            VALUES (%s, %s, 'collaborator')
+            ON CONFLICT (chat_id, user_id) DO NOTHING
+        """, (chat_id, user_id))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return True

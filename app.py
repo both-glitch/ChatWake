@@ -3,10 +3,15 @@ import telebot
 import os
 from database import (
     create_tables,
-    get_groups_by_owner,
+    get_groups_for_user,
     get_teammates_by_group,
-    is_group_owner,
+    is_authorized,
     refresh_all_statuses,
+    check_cooldown,
+    record_action,
+    create_invitation,
+    get_pending_invitations_for_username,
+    respond_invitation,
 )
 from bot import bot, TOKEN, send_wake_up, send_anonymous_nudge
 from database import (
@@ -62,12 +67,13 @@ def serve_static(filename):
 
 # ---------- MINI APP API ----------
 @app.route("/api/groups")
+@app.route("/api/groups")
 def api_groups():
     user_id = request.args.get("user_id", type=int)
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
-    groups = get_groups_by_owner(user_id)
-    return jsonify([{"chat_id": g[0], "title": g[1]} for g in groups])
+    groups = get_groups_for_user(user_id)
+    return jsonify([{"chat_id": g[0], "title": g[1], "role": g[2]} for g in groups])
 
 
 @app.route("/api/groups/<chat_id>/members")
@@ -154,3 +160,36 @@ if __name__ == "__main__":
     bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{TOKEN}")
     print(f"Webhook set to {WEBHOOK_URL}/webhook/{TOKEN}")
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+
+from database import is_username_in_group  # add to imports
+
+@app.route("/api/invite", methods=["POST"])
+def api_invite():
+    data = request.json
+    chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
+    if not is_authorized(chat_id, user_id):
+        return jsonify({"error": "not authorized"}), 403
+    if not is_username_in_group(chat_id, username):
+        return jsonify({"error": "That username hasn't sent a message in this group yet"}), 400
+    create_invitation(chat_id, username, user_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/invitations")
+def api_invitations():
+    username = request.args.get("username", type=str)
+    if not username:
+        return jsonify([])
+    invites = get_pending_invitations_for_username(username)
+    return jsonify([
+        {"id": i[0], "chat_id": i[1], "group_title": i[2], "invited_by": i[3]}
+        for i in invites
+    ])
+
+
+@app.route("/api/invitations/<int:invitation_id>/respond", methods=["POST"])
+def api_respond_invitation(invitation_id):
+    data = request.json
+    user_id, accept = data["user_id"], data["accept"]
+    success = respond_invitation(invitation_id, user_id, accept)
+    return jsonify({"ok": success})
