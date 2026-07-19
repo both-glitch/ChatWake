@@ -9,6 +9,15 @@ from database import (
     refresh_all_statuses,
 )
 from bot import bot, TOKEN, send_wake_up, send_anonymous_nudge
+from database import (
+    create_tables,
+    get_groups_by_owner,
+    get_teammates_by_group,
+    is_group_owner,
+    refresh_all_statuses,
+    check_cooldown,
+    record_action,
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, "webapp"))
@@ -82,7 +91,12 @@ def api_wakeup():
     chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
     if not is_group_owner(chat_id, user_id):
         return jsonify({"error": "not authorized"}), 403
+    allowed, remaining = check_cooldown(chat_id, username)
+    if not allowed:
+        return jsonify({"ok": False, "cooldown": remaining, "error": f"On cooldown for {remaining}s"})
     success = send_wake_up(chat_id, username)
+    if success:
+        record_action(chat_id, username)
     return jsonify({"ok": success})
 
 
@@ -92,8 +106,14 @@ def api_nudge():
     chat_id, username, user_id = data["chat_id"], data["username"], data["user_id"]
     if not is_group_owner(chat_id, user_id):
         return jsonify({"error": "not authorized"}), 403
+    allowed, remaining = check_cooldown(chat_id, username)
+    if not allowed:
+        return jsonify({"ok": False, "cooldown": remaining, "error": f"On cooldown for {remaining}s"})
     success = send_anonymous_nudge(chat_id, username)
+    if success:
+        record_action(chat_id, username)
     return jsonify({"ok": success})
+
 
 @app.route("/api/wakeup-all", methods=["POST"])
 def api_wakeup_all():
@@ -103,9 +123,13 @@ def api_wakeup_all():
         return jsonify({"error": "not authorized"}), 403
     members = get_teammates_by_group(chat_id)
     ghosts = [m for m in members if m[6] == "ghosting"]
+    sent = 0
     for m in ghosts:
-        send_wake_up(chat_id, m[4])
-    return jsonify({"ok": True, "count": len(ghosts)})
+        allowed, _ = check_cooldown(chat_id, m[4])
+        if allowed and send_wake_up(chat_id, m[4]):
+            record_action(chat_id, m[4])
+            sent += 1
+    return jsonify({"ok": True, "count": sent})
 
 
 @app.route("/api/nudge-all", methods=["POST"])
@@ -116,9 +140,13 @@ def api_nudge_all():
         return jsonify({"error": "not authorized"}), 403
     members = get_teammates_by_group(chat_id)
     quiet = [m for m in members if m[6] == "quiet"]
+    sent = 0
     for m in quiet:
-        send_anonymous_nudge(chat_id, m[4])
-    return jsonify({"ok": True, "count": len(quiet)})
+        allowed, _ = check_cooldown(chat_id, m[4])
+        if allowed and send_anonymous_nudge(chat_id, m[4]):
+            record_action(chat_id, m[4])
+            sent += 1
+    return jsonify({"ok": True, "count": sent})
 
 
 if __name__ == "__main__":

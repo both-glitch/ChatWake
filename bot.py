@@ -1,5 +1,22 @@
 import telebot
 import os
+import random
+WAKE_UP_MESSAGES = [
+    "WAKE UP @{u}! You have been inactive.",
+    "@{u}, the group hasn't heard from you in a while. Time to check in!",
+    "Paging @{u}... anyone home?",
+    "@{u} has officially entered ghost mode. Someone send help.",
+    "Hey @{u}, your team is waiting on you!",
+]
+
+NUDGE_MESSAGES = [
+    "Someone in the group noticed @{u} has been quiet for a while.",
+    "Psst... has anyone seen @{u} lately?",
+    "@{u} might need a gentle reminder to check the chat.",
+    "It's been a bit quiet from @{u}'s side. Just a nudge!",
+    "A friendly reminder to @{u}: the group is still here.",
+]
+
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from database import (
@@ -14,6 +31,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 TOKEN = os.getenv("TOKEN")
 bot = telebot.TeleBot(TOKEN)
+
 
 
 # ---------- AUTO-DETECT NEW OR REMOVED GROUPS ----------
@@ -57,7 +75,8 @@ def handle_message(message):
 def send_wake_up(chat_id, username):
     """Publicly mention someone in their group to wake them up."""
     try:
-        bot.send_message(chat_id, f"WAKE UP @{username}! You have been inactive.")
+        message = random.choice(WAKE_UP_MESSAGES).format(u=username)
+        bot.send_message(chat_id, message)
         print(f"Wake up sent to @{username} in {chat_id}")
         return True
     except Exception as e:
@@ -68,7 +87,8 @@ def send_wake_up(chat_id, username):
 def send_anonymous_nudge(chat_id, username):
     """Send a nudge that doesn't reveal who triggered it."""
     try:
-        bot.send_message(chat_id, f"Someone in the group noticed @{username} has been quiet for a while.")
+        message = random.choice(NUDGE_MESSAGES).format(u=username)
+        bot.send_message(chat_id, message)
         print(f"Anonymous nudge sent to @{username} in {chat_id}")
         return True
     except Exception as e:

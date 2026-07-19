@@ -15,6 +15,10 @@ def get_conn():
 def create_tables():
     conn = get_conn()
     cursor = conn.cursor()
+    
+    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS quiet_limit INTEGER DEFAULT 30;")
+    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS ghost_limit INTEGER DEFAULT 60;")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             chat_id BIGINT PRIMARY KEY,
@@ -210,21 +214,29 @@ def update_status(telegram_id, chat_id, status):
     conn.close()
 
 
+# Replace your current refresh_all_statuses loop with this updated query:
 def refresh_all_statuses():
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT telegram_id, chat_id, last_seen FROM teammates")
+    # Grabs limits from the group table side-by-side with teammates
+    cursor.execute("""
+        SELECT t.telegram_id, t.chat_id, t.last_seen, g.quiet_limit, g.ghost_limit 
+        FROM teammates t
+        JOIN groups g ON t.chat_id = g.chat_id
+    """)
     rows = cursor.fetchall()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    for telegram_id, chat_id, last_seen_str in rows:
+    for telegram_id, chat_id, last_seen_str, q_lim, g_lim in rows:
         last_seen_time = datetime.strptime(last_seen_str, "%Y-%m-%d %H:%M:%S")
         seconds_inactive = (now - last_seen_time).total_seconds()
-        if seconds_inactive >= GHOST_THRESHOLD_SECONDS:
+        
+        if seconds_inactive >= g_lim:
             new_status = "ghosting"
-        elif seconds_inactive >= QUIET_THRESHOLD_SECONDS:
+        elif seconds_inactive >= q_lim:
             new_status = "quiet"
         else:
             new_status = "active"
+            
         cursor.execute(
             "UPDATE teammates SET status = %s WHERE telegram_id = %s AND chat_id = %s",
             (new_status, telegram_id, chat_id)
