@@ -163,6 +163,8 @@ if __name__ == "__main__":
 
 from database import is_username_in_group  # add to imports
 
+from database import can_invite_again, get_invite_history  # add to imports
+
 @app.route("/api/invite", methods=["POST"])
 def api_invite():
     data = request.json
@@ -171,8 +173,27 @@ def api_invite():
         return jsonify({"error": "not authorized"}), 403
     if not is_username_in_group(chat_id, username):
         return jsonify({"error": "That username hasn't sent a message in this group yet"}), 400
+
+    allowed, remaining = can_invite_again(chat_id, username)
+    if not allowed:
+        hours = remaining // 3600
+        return jsonify({"error": f"Already invited today. Try again in {hours}h"}), 429
+
     create_invitation(chat_id, username, user_id)
     return jsonify({"ok": True})
+
+
+@app.route("/api/groups/<chat_id>/invite-history")
+def api_invite_history(chat_id):
+    chat_id = int(chat_id)
+    user_id = request.args.get("user_id", type=int)
+    if not user_id or not is_authorized(chat_id, user_id):
+        return jsonify({"error": "not authorized"}), 403
+    history = get_invite_history(chat_id)
+    return jsonify([
+        {"username": h[0], "status": h[1], "created_at": h[2].isoformat()}
+        for h in history
+    ])
 
 
 @app.route("/api/invitations")
