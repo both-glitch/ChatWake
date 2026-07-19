@@ -12,6 +12,7 @@
       --card-hover: #242942;
       --text: #eef0f6;
       --subtext: #8b90a6;
+      --border: #2c3148;
       --accent: #ffb648;
       --accent-hover: #ffc670;
       --accent-active: #e6a13f;
@@ -23,27 +24,46 @@
       --ghosting-hover: #ff7d90;
       --ghosting-active: #e64860;
     }
+    [data-theme="light"] {
+      --bg: #f4f5f9;
+      --card: #ffffff;
+      --card-hover: #eef0f6;
+      --text: #1c1f2a;
+      --subtext: #6b7086;
+      --border: #dde1ee;
+    }
     * { box-sizing: border-box; }
     body {
       background: var(--bg); color: var(--text);
       font-family: 'Segoe UI', system-ui, sans-serif;
       margin: 0; padding: 18px 16px 40px;
+      transition: background-color 0.25s ease, color 0.25s ease;
     }
     h2 {
       color: var(--text); font-size: 19px; font-weight: 700;
-      margin: 0 0 18px; letter-spacing: 0.2px;
+      margin: 0; letter-spacing: 0.2px;
     }
     h2 .accent { color: var(--accent); }
     h3 { color: var(--text); font-size: 16px; margin: 0; font-weight: 600; }
+    h4 { color: var(--text); font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+    .header-row { display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px; }
+    .theme-toggle {
+      width: 40px; height: 40px; border-radius: 10px;
+      background: var(--card); border: 1px solid var(--border);
+      display:flex; align-items:center; justify-content:center; font-size: 17px;
+      cursor: pointer; transition: background-color 0.18s ease;
+    }
+    .theme-toggle:hover { background: var(--card-hover); }
     .top-row { display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px; }
     .card {
-      background: var(--card); border-radius: 12px; padding: 14px 16px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
       margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
-      transition: background-color 0.2s ease;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
     }
     .card:hover { background: var(--card-hover); }
     .member-info { display:flex; flex-direction:column; gap:4px; }
     .member-name { font-weight: 600; font-size: 14px; }
+    .role-tag { font-size: 10px; color: var(--subtext); font-weight: 500; }
     .status-row { display:flex; align-items:center; gap:6px; font-size: 11px; font-weight:600; letter-spacing: 0.3px; }
     .status-active { color: var(--active); }
     .status-quiet { color: var(--quiet); }
@@ -60,33 +80,59 @@
     .btn-accent { background: var(--accent); color: #1c1408; }
     .btn-accent:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 0 0 3px rgba(255,182,72,0.18); }
     .btn-accent:active:not(:disabled) { background: var(--accent-active); }
-    .btn-card { background: var(--card); color: var(--text); border: 1px solid #2c3148; }
-    .btn-card:hover:not(:disabled) { background: var(--card-hover); border-color: #3a4162; }
-    .btn-card:active:not(:disabled) { background: #171a26; }
+    .btn-card { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .btn-card:hover:not(:disabled) { background: var(--card-hover); }
+    .btn-card:active:not(:disabled) { opacity: 0.8; }
     .btn-ghost { background: var(--ghosting); color: #1c1408; }
     .btn-ghost:hover:not(:disabled) { background: var(--ghosting-hover); box-shadow: 0 0 0 3px rgba(255,92,114,0.18); }
     .btn-ghost:active:not(:disabled) { background: var(--ghosting-active); }
     .btn-quiet-action { background: var(--quiet); color: #1c1408; }
     .btn-quiet-action:hover:not(:disabled) { background: var(--quiet-hover); box-shadow: 0 0 0 3px rgba(255,182,72,0.18); }
     .btn-quiet-action:active:not(:disabled) { background: var(--quiet-active); }
+    .btn-accept { background: var(--active); color: #06231a; }
+    .btn-decline { background: transparent; color: var(--subtext); border: 1px solid var(--border); }
     .bulk-row { display:flex; gap:8px; margin-bottom: 16px; }
     .bulk-row button { flex: 1; font-size: 11.5px; padding: 10px 4px; }
     .empty-msg { color: var(--subtext); font-size: 14px; margin-top: 24px; text-align:center; line-height: 1.5; }
     #groups-view, #members-view { display:none; }
+    .invite-section { margin-bottom: 18px; }
+    .invite-card {
+      background: var(--card); border: 1px solid var(--accent); border-radius: 12px;
+      padding: 14px 16px; margin-bottom: 8px;
+    }
+    .invite-text { font-size: 13px; margin-bottom: 10px; }
+    .invite-actions { display:flex; gap:8px; }
+    .invite-actions button { flex: 1; }
+    .invite-row {
+      display:flex; gap:8px; margin-top: 14px; margin-bottom: 6px;
+    }
+    .invite-row input {
+      flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px 12px; color: var(--text); font-size: 13px; outline: none;
+    }
+    .invite-link-box {
+      font-size: 11px; color: var(--subtext); word-break: break-all;
+      background: var(--card-hover); border-radius: 8px; padding: 8px 10px; margin-top: 6px;
+      display: none;
+    }
     .toast {
       position: fixed; bottom: 16px; left: 16px; right: 16px;
       background: var(--card); color: var(--text); padding: 11px 14px;
       border-radius: 10px; font-size: 13px; text-align:center;
       opacity: 0; transition: opacity .2s; pointer-events: none;
-      border: 1px solid #2c3148;
+      border: 1px solid var(--border);
     }
     .toast.show { opacity: 1; }
     .toast.error { border-color: var(--ghosting); color: var(--ghosting); }
   </style>
 </head>
 <body>
-  <h2>ChatWake <span class="accent">·</span> Group Activity</h2>
+  <div class="header-row">
+    <h2>ChatWake <span class="accent">·</span> Group Activity</h2>
+    <div class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</div>
+  </div>
 
+  <div id="invitations-view"></div>
   <div id="groups-view"></div>
   <div id="members-view"></div>
   <div class="toast" id="toast"></div>
@@ -96,12 +142,32 @@
     tg.ready();
     tg.expand();
 
-    const userId = tg.initDataUnsafe?.user?.id;
+    const currentUser = tg.initDataUnsafe?.user || {};
+    const userId = currentUser.id;
+    const myUsername = (currentUser.username || "").toLowerCase();
+    const BOT_USERNAME = "Group_Productivitybot";
+
     let refreshTimer = null;
     let currentChatId = null;
     let currentTitle = null;
-
     let memberRowCache = {};
+
+    // ---------- THEME ----------
+    function applyTheme(theme) {
+      document.body.setAttribute("data-theme", theme);
+      document.getElementById("theme-toggle").textContent = theme === "light" ? "☀️" : "🌙";
+    }
+    function toggleTheme() {
+      const current = document.body.getAttribute("data-theme") === "light" ? "dark" : "light";
+      applyTheme(current);
+      try { localStorage.setItem("chatwake-theme", current); } catch (e) {}
+    }
+    (function initTheme() {
+      let saved = null;
+      try { saved = localStorage.getItem("chatwake-theme"); } catch (e) {}
+      const platformDark = tg.colorScheme === "dark";
+      applyTheme(saved || (platformDark ? "dark" : "light"));
+    })();
 
     function showToast(msg, isError) {
       const t = document.getElementById("toast");
@@ -112,10 +178,7 @@
 
     function formatLastSeen(isoLike) {
       const d = new Date(isoLike.replace(" ", "T") + "Z");
-      return d.toLocaleString(undefined, {
-        month: "short", day: "numeric",
-        hour: "2-digit", minute: "2-digit"
-      });
+      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
     }
 
     function statusStyle(status) {
@@ -129,9 +192,7 @@
       let remaining = Math.max(1, Math.ceil(seconds));
       btnEl.disabled = true;
       btnEl.style.opacity = "0.5";
-      btnEl.dataset.baseLabel = baseLabel;
       btnEl.textContent = `${baseLabel} (${remaining}s)`;
-
       const interval = setInterval(() => {
         remaining -= 1;
         if (remaining <= 0) {
@@ -145,6 +206,48 @@
       }, 1000);
     }
 
+    // ---------- INVITATIONS ----------
+    async function loadInvitations() {
+      const container = document.getElementById("invitations-view");
+      if (!myUsername) { container.innerHTML = ""; return; }
+
+      const res = await fetch(`/api/invitations?username=${encodeURIComponent(myUsername)}`);
+      const invites = await res.json();
+
+      if (!invites.length) { container.innerHTML = ""; return; }
+
+      container.innerHTML = `
+        <div class="invite-section">
+          <h4>Pending Invitations</h4>
+          ${invites.map(i => `
+            <div class="invite-card">
+              <div class="invite-text">You've been invited to help manage <b>${i.group_title}</b></div>
+              <div class="invite-actions">
+                <button class="btn-accept" onclick="respondInvite(${i.id}, true)">Accept</button>
+                <button class="btn-decline" onclick="respondInvite(${i.id}, false)">Decline</button>
+              </div>
+            </div>`).join("")}
+        </div>`;
+    }
+
+    async function respondInvite(invitationId, accept) {
+      const res = await fetch(`/api/invitations/${invitationId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, accept }),
+      });
+      const result = await res.json();
+      if (result.ok) {
+        showToast(accept ? "Invitation accepted" : "Invitation declined");
+        tg.HapticFeedback.notificationOccurred("success");
+        loadInvitations();
+        loadGroups();
+      } else {
+        showToast("Something went wrong", true);
+      }
+    }
+
+    // ---------- GROUPS ----------
     async function loadGroups() {
       clearInterval(refreshTimer);
       memberRowCache = {};
@@ -156,7 +259,10 @@
       view.innerHTML = groups.length
         ? groups.map(g => `
             <div class="card">
-              <span class="member-name">${g.title}</span>
+              <div class="member-info">
+                <span class="member-name">${g.title}</span>
+                <span class="role-tag">${g.role === "owner" ? "Owner" : "Collaborator"}</span>
+              </div>
               <button class="btn-accent" onclick="openGroup(${g.chat_id}, '${g.title.replace(/'/g, "\\'")}')">Open</button>
             </div>`).join("")
         : `<div class="empty-msg">No groups yet.<br>Add the bot to a Telegram group to get started.</div>`;
@@ -167,8 +273,8 @@
       currentTitle = title;
       memberRowCache = {};
       renderShell();
-      loadMembers(true);
-      refreshTimer = setInterval(() => loadMembers(false), 8000);
+      loadMembers();
+      refreshTimer = setInterval(() => loadMembers(), 8000);
     }
 
     function renderShell() {
@@ -185,8 +291,39 @@
           <button class="btn-ghost" onclick="act('wakeup-all',${currentChatId}, null, this)">Wake All Ghosts</button>
           <button class="btn-quiet-action" onclick="act('nudge-all',${currentChatId}, null, this)">Nudge All Quiet</button>
         </div>
+        <div class="card" style="flex-direction:column; align-items:stretch;">
+          <h4>Invite someone to help</h4>
+          <div class="invite-row">
+            <input type="text" id="invite-username-input" placeholder="@username" />
+            <button class="btn-accent" onclick="sendInvite()">Invite</button>
+          </div>
+          <div class="invite-link-box" id="invite-link-box"></div>
+        </div>
         <div id="member-list"></div>
       `;
+    }
+
+    async function sendInvite() {
+      const input = document.getElementById("invite-username-input");
+      const username = input.value.trim().replace(/^@/, "");
+      if (!username) { showToast("Enter a username first", true); return; }
+
+      const res = await fetch("/api/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: currentChatId, username, user_id: userId }),
+      });
+      const result = await res.json();
+
+      if (result.ok) {
+        showToast(`Invited @${username}`);
+        input.value = "";
+        const linkBox = document.getElementById("invite-link-box");
+        linkBox.style.display = "block";
+        linkBox.textContent = `Share this link with them to open ChatWake: https://t.me/${BOT_USERNAME}/app`;
+      } else {
+        showToast(result.error || "Couldn't send invite", true);
+      }
     }
 
     function actionButtonHtml(chatId, username, status) {
@@ -199,7 +336,7 @@
       return "";
     }
 
-    async function loadMembers(isInitial) {
+    async function loadMembers() {
       const res = await fetch(`/api/groups/${currentChatId}/members?user_id=${userId}`);
       const members = await res.json();
       const list = document.getElementById("member-list");
@@ -287,9 +424,7 @@
         const result = await res.json();
 
         if (!res.ok || result.ok === false) {
-          if (result.cooldown && btnEl) {
-            startButtonCooldown(btnEl, result.cooldown, originalLabel);
-          }
+          if (result.cooldown && btnEl) startButtonCooldown(btnEl, result.cooldown, originalLabel);
           showToast(result.error || "Action failed.", true);
           return;
         }
@@ -300,12 +435,13 @@
         if (type === "wakeup-all")    { showToast(result.count ? `Woke up ${result.count} member(s)` : "No one eligible right now"); startButtonCooldown(btnEl, 120, "Wake All Ghosts"); }
         if (type === "nudge-all")     { showToast(result.count ? `Nudged ${result.count} member(s)` : "No one eligible right now"); startButtonCooldown(btnEl, 120, "Nudge All Quiet"); }
 
-        loadMembers(false);
+        loadMembers();
       } catch (e) {
         showToast("Network error -- action may not have sent.", true);
       }
     }
 
+    loadInvitations();
     loadGroups();
   </script>
 </body>

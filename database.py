@@ -6,7 +6,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 QUIET_THRESHOLD_SECONDS = 30
 GHOST_THRESHOLD_SECONDS = 60
-
+COOLDOWN_SECONDS = 120  #2 minutes
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
@@ -15,10 +15,6 @@ def get_conn():
 def create_tables():
     conn = get_conn()
     cursor = conn.cursor()
-    
-    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS quiet_limit INTEGER DEFAULT 30;")
-    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS ghost_limit INTEGER DEFAULT 60;")
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             chat_id BIGINT PRIMARY KEY,
@@ -51,6 +47,34 @@ def create_tables():
             chat_id BIGINT,
             folder_id INTEGER,
             PRIMARY KEY (chat_id, folder_id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS action_cooldowns (
+            chat_id BIGINT,
+            username TEXT,
+            last_sent TIMESTAMP,
+            PRIMARY KEY (chat_id, username)
+        )
+    """)
+    # People who've been invited and accepted -- get the same access as the owner
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS group_access (
+            chat_id BIGINT,
+            user_id BIGINT,
+            role TEXT DEFAULT 'collaborator',
+            PRIMARY KEY (chat_id, user_id)
+        )
+    """)
+    # Pending invites -- stored by username since we don't know their user_id yet
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS invitations (
+            id SERIAL PRIMARY KEY,
+            chat_id BIGINT,
+            invited_username TEXT,
+            invited_by BIGINT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT NOW()
         )
     """)
     conn.commit()
@@ -255,6 +279,44 @@ def remove_group_from_folder(chat_id, folder_id):
         "DELETE FROM folder_maps WHERE chat_id = %s AND folder_id = %s",
         (chat_id, folder_id)
     )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def check_cooldown(chat_id, username):
+    """Returns (allowed: bool, seconds_remaining: int)."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT last_sent FROM action_cooldowns WHERE chat_id = %s AND username = %s",
+        (chat_id, username)
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if row is None:
+        return True, 0
+
+    last_sent = row[0]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    elapsed = (now - last_sent).total_seconds()
+    remaining = COOLDOWN_SECONDS - elapsed
+
+    if remaining > 0:
+        return False, int(remaining)
+    return True, 0
+
+
+def record_action(chat_id, username):
+    conn = get_conn()
+    cursor = conn.cursor()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cursor.execute("""
+        INSERT INTO action_cooldowns (chat_id, username, last_sent)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (chat_id, username) DO UPDATE SET last_sent = EXCLUDED.last_sent
+    """, (chat_id, username, now))
     conn.commit()
     cursor.close()
     conn.close()
