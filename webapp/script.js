@@ -29,12 +29,19 @@ function toggleTheme() {
   applyTheme(saved || (platformDark ? "dark" : "light"));
 })();
 
-// ---------- HELPERS ----------
-function showToast(msg, isError) {
+// ---------- TOAST ----------
+// variant: "wake" (red), "nudge" (amber), "recovered" (green), "error", or null (neutral)
+function showToast(msg, variant) {
   const t = document.getElementById("toast");
   t.textContent = msg;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => t.classList.remove("show"), 2400);
+  let cls = "toast show";
+  if (variant === "wake") cls += " toast-wake";
+  else if (variant === "nudge") cls += " toast-nudge";
+  else if (variant === "recovered") cls += " toast-recovered";
+  else if (variant === "error") cls += " error";
+  t.className = cls;
+  clearTimeout(t._hideTimer);
+  t._hideTimer = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
 function formatLastSeen(isoLike) {
@@ -46,25 +53,6 @@ function statusStyle(status) {
   if (status === "active") return { cls: "status-active", label: "Active" };
   if (status === "quiet") return { cls: "status-quiet", label: "Quiet" };
   return { cls: "status-ghosting", label: "Ghosting" };
-}
-
-function startButtonCooldown(btnEl, seconds, baseLabel) {
-  if (!btnEl) return;
-  let remaining = Math.max(1, Math.ceil(seconds));
-  btnEl.disabled = true;
-  btnEl.style.opacity = "0.5";
-  btnEl.textContent = `${baseLabel} (${remaining}s)`;
-  const interval = setInterval(() => {
-    remaining -= 1;
-    if (remaining <= 0) {
-      clearInterval(interval);
-      btnEl.disabled = false;
-      btnEl.style.opacity = "1";
-      btnEl.textContent = baseLabel;
-    } else {
-      btnEl.textContent = `${baseLabel} (${remaining}s)`;
-    }
-  }, 1000);
 }
 
 // ---------- INVITATIONS RECEIVED ----------
@@ -104,7 +92,7 @@ async function respondInvite(invitationId, accept) {
     loadInvitations();
     loadGroups();
   } else {
-    showToast("Something went wrong", true);
+    showToast("Something went wrong", "error");
   }
 }
 
@@ -180,7 +168,7 @@ function toggleInvitePanel() {
 async function sendInvite() {
   const input = document.getElementById("invite-username-input");
   const username = input.value.trim().replace(/^@/, "");
-  if (!username) { showToast("Enter a username first", true); return; }
+  if (!username) { showToast("Enter a username first", "error"); return; }
 
   const res = await fetch("/api/invite", {
     method: "POST",
@@ -197,7 +185,7 @@ async function sendInvite() {
     linkBox.textContent = `Share this link with them to open ChatWake: https://t.me/${BOT_USERNAME}/app`;
     loadInviteHistory();
   } else {
-    showToast(result.error || "Couldn't send invite", true);
+    showToast(result.error || "Couldn't send invite", "error");
   }
 }
 
@@ -213,12 +201,18 @@ async function loadInviteHistory() {
   const box = document.getElementById("invite-history-list");
   if (!box) return;
 
+  const header = `
+    <div class="history-header">
+      <h4>Invitation History</h4>
+      <span class="history-reset-note">Resets every 24 hours</span>
+    </div>`;
+
   if (!history.length) {
-    box.innerHTML = `<div class="empty-msg" style="margin-top:10px; font-size:12px;">No invites sent in the last 24 hours.</div>`;
+    box.innerHTML = header + `<div class="empty-msg" style="margin-top:4px; font-size:12px;">No invites sent in the last 24 hours.</div>`;
     return;
   }
 
-  box.innerHTML = history.map(h => {
+  box.innerHTML = header + history.map(h => {
     const s = historyStatusLabel(h.status);
     return `
       <div class="history-row">
@@ -228,14 +222,25 @@ async function loadInviteHistory() {
   }).join("");
 }
 
-function actionButtonHtml(chatId, username, status) {
+// ---------- MEMBERS ----------
+
+// Builds the correct action button for the CURRENT status, honoring server-reported cooldown.
+function actionButtonHtml(chatId, username, status, cooldownRemaining) {
+  const onCooldown = cooldownRemaining && cooldownRemaining > 0;
+
   if (status === "ghosting") {
-    return `<button class="btn-ghost" onclick="act('wakeup-single',${chatId},'${username}', this)">Wake Up</button>`;
+    const label = onCooldown ? `Wake Up (${cooldownRemaining}s)` : "Wake Up";
+    const disabledAttr = onCooldown ? "disabled" : "";
+    return `<button class="btn-ghost" ${disabledAttr} style="${onCooldown ? 'opacity:0.5;' : ''}"
+              onclick="act('wakeup-single',${chatId},'${username}', this)">${label}</button>`;
   }
   if (status === "quiet") {
-    return `<button class="btn-quiet-action" onclick="act('nudge-single',${chatId},'${username}', this)">Nudge</button>`;
+    const label = onCooldown ? `Nudge (${cooldownRemaining}s)` : "Nudge";
+    const disabledAttr = onCooldown ? "disabled" : "";
+    return `<button class="btn-quiet-action" ${disabledAttr} style="${onCooldown ? 'opacity:0.5;' : ''}"
+              onclick="act('nudge-single',${chatId},'${username}', this)">${label}</button>`;
   }
-  return "";
+  return ""; // active -- no button
 }
 
 async function loadMembers() {
@@ -261,6 +266,7 @@ async function loadMembers() {
   members.forEach(m => {
     const cached = memberRowCache[m.telegram_id];
     const s = statusStyle(m.status);
+    const cooldown = m.cooldown_remaining || 0;
 
     if (!cached) {
       const el = document.createElement("div");
@@ -274,7 +280,7 @@ async function loadMembers() {
             <span class="last-seen">Last reply: ${formatLastSeen(m.last_seen)}</span>
           </div>
         </div>
-        <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status)}</span>
+        <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status, cooldown)}</span>
       `;
       list.appendChild(el);
       memberRowCache[m.telegram_id] = {
@@ -286,15 +292,21 @@ async function loadMembers() {
         lastSeenValue: m.last_seen,
       };
     } else {
+      // Detect recovery: was quiet/ghosting, now active -- green confirmation toast
+      if (cached.lastStatus !== "active" && m.status === "active") {
+        showToast(`${m.name} is active again`, "recovered");
+      }
+
       if (cached.lastStatus !== m.status) {
         cached.statusRow.className = `status-row ${s.cls}`;
         cached.statusRow.innerHTML = `<span class="dot"></span>${s.label}`;
-        const existingBtn = cached.actionSlot.querySelector("button");
-        if (!existingBtn || !existingBtn.disabled) {
-          cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status);
-        }
         cached.lastStatus = m.status;
       }
+
+      // Action button is always rebuilt from current status + server cooldown truth,
+      // so it can never go stale across polls or page navigation.
+      cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status, cooldown);
+
       if (cached.lastSeenValue !== m.last_seen) {
         cached.lastSeenEl.textContent = `Last reply: ${formatLastSeen(m.last_seen)}`;
         cached.lastSeenValue = m.last_seen;
@@ -317,8 +329,6 @@ async function act(type, chatId, username, btnEl) {
   if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
   if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
 
-  const originalLabel = btnEl ? btnEl.textContent : "";
-
   try {
     const res = await fetch(endpoint, {
       method: "POST",
@@ -328,20 +338,20 @@ async function act(type, chatId, username, btnEl) {
     const result = await res.json();
 
     if (!res.ok || result.ok === false) {
-      if (result.cooldown && btnEl) startButtonCooldown(btnEl, result.cooldown, originalLabel);
-      showToast(result.error || "Action failed.", true);
+      showToast(result.error || "Action failed.", "error");
+      loadMembers(); // pull fresh server cooldown state immediately, even on failure
       return;
     }
 
     tg.HapticFeedback.notificationOccurred("success");
-    if (type === "wakeup-single") { showToast(`Woke up ${username}`); startButtonCooldown(btnEl, 120, "Wake Up"); }
-    if (type === "nudge-single")  { showToast(`Nudged ${username}`); startButtonCooldown(btnEl, 120, "Nudge"); }
-    if (type === "wakeup-all")    { showToast(result.count ? `Woke up ${result.count} member(s)` : "No one eligible right now"); startButtonCooldown(btnEl, 120, "Wake All Ghosts"); }
-    if (type === "nudge-all")     { showToast(result.count ? `Nudged ${result.count} member(s)` : "No one eligible right now"); startButtonCooldown(btnEl, 120, "Nudge All Quiet"); }
+    if (type === "wakeup-single") showToast(`Wake-up sent to ${username}`, "wake");
+    if (type === "nudge-single")  showToast(`Nudge sent to ${username}`, "nudge");
+    if (type === "wakeup-all")    showToast(result.count ? `Woke up ${result.count} member(s)` : "No one eligible right now", "wake");
+    if (type === "nudge-all")     showToast(result.count ? `Nudged ${result.count} member(s)` : "No one eligible right now", "nudge");
 
     loadMembers();
   } catch (e) {
-    showToast("Network error -- action may not have sent.", true);
+    showToast("Network error -- action may not have sent.", "error");
   }
 }
 
