@@ -89,10 +89,18 @@ class VercelPathMiddleware(object):
         self.app = app
 
     def __call__(self, environ, start_response):
+        import sys
+        print("--- DEBUG WSGI ENVIRON ---", file=sys.stderr)
+        for k, v in sorted(environ.items()):
+            if k.startswith('HTTP_') or k in ('PATH_INFO', 'REQUEST_URI', 'QUERY_STRING', 'REQUEST_METHOD'):
+                print(f"  {k}: {v}", file=sys.stderr)
+        print("-------------------------", file=sys.stderr)
+
         x_forwarded_uri = environ.get('HTTP_X_FORWARDED_URI')
         if x_forwarded_uri:
             path = x_forwarded_uri.split('?')[0]
             environ['PATH_INFO'] = path
+            print(f"Overrode PATH_INFO to: {path}", file=sys.stderr)
         return self.app(environ, start_response)
 
 app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
