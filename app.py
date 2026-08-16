@@ -82,6 +82,21 @@ def require_telegram_user(f):
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, "webapp"))
 
+# ---------- VERCEL WSGI PATH MIDDLEWARE ----------
+# Overrides PATH_INFO with Vercel's original request URI to fix rewrite routing.
+class VercelPathMiddleware(object):
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        x_forwarded_uri = environ.get('HTTP_X_FORWARDED_URI')
+        if x_forwarded_uri:
+            path = x_forwarded_uri.split('?')[0]
+            environ['PATH_INFO'] = path
+        return self.app(environ, start_response)
+
+app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
+
 create_tables()
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
