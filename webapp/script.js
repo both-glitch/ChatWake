@@ -12,6 +12,16 @@ let currentChatId = null;
 let currentTitle = null;
 let memberRowCache = {};
 
+// Helper to perform authenticated requests using Telegram initData
+async function tgFetch(url, options = {}) {
+  const headers = options.headers || {};
+  if (tg.initData) {
+    headers["X-Telegram-Init-Data"] = tg.initData;
+  }
+  options.headers = headers;
+  return fetch(url, options);
+}
+
 // ---------- THEME ----------
 function applyTheme(theme) {
   document.body.setAttribute("data-theme", theme);
@@ -60,7 +70,7 @@ async function loadInvitations() {
   const container = document.getElementById("invitations-view");
   if (!myUsername) { container.innerHTML = ""; return; }
 
-  const res = await fetch(`/api/invitations?username=${encodeURIComponent(myUsername)}`);
+  const res = await tgFetch("/api/invitations");
   const invites = await res.json();
 
   if (!invites.length) { container.innerHTML = ""; return; }
@@ -80,10 +90,10 @@ async function loadInvitations() {
 }
 
 async function respondInvite(invitationId, accept) {
-  const res = await fetch(`/api/invitations/${invitationId}/respond`, {
+  const res = await tgFetch(`/api/invitations/${invitationId}/respond`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, accept }),
+    body: JSON.stringify({ accept }),
   });
   const result = await res.json();
   if (result.ok) {
@@ -101,7 +111,7 @@ async function loadGroups() {
   clearInterval(refreshTimer);
   memberRowCache = {};
   document.getElementById("invite-toggle").style.display = "none";
-  const res = await fetch(`/api/groups?user_id=${userId}`);
+  const res = await tgFetch("/api/groups");
   const groups = await res.json();
   document.getElementById("groups-view").style.display = "block";
   document.getElementById("members-view").style.display = "none";
@@ -170,10 +180,10 @@ async function sendInvite() {
   const username = input.value.trim().replace(/^@/, "");
   if (!username) { showToast("Enter a username first", "error"); return; }
 
-  const res = await fetch("/api/invite", {
+  const res = await tgFetch("/api/invite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: currentChatId, username, user_id: userId }),
+    body: JSON.stringify({ chat_id: currentChatId, username }),
   });
   const result = await res.json();
 
@@ -196,7 +206,7 @@ function historyStatusLabel(status) {
 }
 
 async function loadInviteHistory() {
-  const res = await fetch(`/api/groups/${currentChatId}/invite-history?user_id=${userId}`);
+  const res = await tgFetch(`/api/groups/${currentChatId}/invite-history`);
   const history = await res.json();
   const box = document.getElementById("invite-history-list");
   if (!box) return;
@@ -244,7 +254,7 @@ function actionButtonHtml(chatId, username, status, cooldownRemaining) {
 }
 
 async function loadMembers() {
-  const res = await fetch(`/api/groups/${currentChatId}/members?user_id=${userId}`);
+  const res = await tgFetch(`/api/groups/${currentChatId}/members`);
   const members = await res.json();
   const list = document.getElementById("member-list");
   if (!list) return;
@@ -324,13 +334,13 @@ function goBack() {
 
 async function act(type, chatId, username, btnEl) {
   let endpoint, body;
-  if (type === "wakeup-single") { endpoint = "/api/wakeup"; body = { chat_id: chatId, username, user_id: userId }; }
-  if (type === "nudge-single")  { endpoint = "/api/nudge";  body = { chat_id: chatId, username, user_id: userId }; }
-  if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
-  if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
+  if (type === "wakeup-single") { endpoint = "/api/wakeup"; body = { chat_id: chatId, username }; }
+  if (type === "nudge-single")  { endpoint = "/api/nudge";  body = { chat_id: chatId, username }; }
+  if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId }; }
+  if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId }; }
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await tgFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

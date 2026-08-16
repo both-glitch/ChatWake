@@ -2,11 +2,16 @@ import psycopg2
 import os
 from datetime import datetime, timezone
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-QUIET_THRESHOLD_SECONDS = 30
-GHOST_THRESHOLD_SECONDS = 60
-COOLDOWN_SECONDS = 120  #2 minutes
+# Default per-group thresholds (seconds) -- used when a group has no custom values set
+DEFAULT_QUIET_LIMIT = 43200  # 12 hours
+DEFAULT_GHOST_LIMIT = 86400  # 24 hours
+
+COOLDOWN_SECONDS = 120  # 2 minutes between wake-up/nudge actions per person
+
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
@@ -15,6 +20,7 @@ def get_conn():
 def create_tables():
     conn = get_conn()
     cursor = conn.cursor()
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             chat_id BIGINT PRIMARY KEY,
@@ -23,8 +29,10 @@ def create_tables():
             folder_id INTEGER DEFAULT NULL
         )
     """)
-    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS quiet_limit INTEGER DEFAULT 30")
-    cursor.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS ghost_limit INTEGER DEFAULT 60")
+    # Safe to run every startup -- only adds the column if it's missing
+    cursor.execute(f"ALTER TABLE groups ADD COLUMN IF NOT EXISTS quiet_limit INTEGER DEFAULT {DEFAULT_QUIET_LIMIT}")
+    cursor.execute(f"ALTER TABLE groups ADD COLUMN IF NOT EXISTS ghost_limit INTEGER DEFAULT {DEFAULT_GHOST_LIMIT}")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teammates (
             id SERIAL PRIMARY KEY,
@@ -37,6 +45,7 @@ def create_tables():
             UNIQUE(telegram_id, chat_id)
         )
     """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS folders (
             id SERIAL PRIMARY KEY,
@@ -44,6 +53,7 @@ def create_tables():
             color TEXT NOT NULL
         )
     """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS folder_maps (
             chat_id BIGINT,
@@ -51,6 +61,7 @@ def create_tables():
             PRIMARY KEY (chat_id, folder_id)
         )
     """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS action_cooldowns (
             chat_id BIGINT,
@@ -59,7 +70,8 @@ def create_tables():
             PRIMARY KEY (chat_id, username)
         )
     """)
-    # People who've been invited and accepted -- get the same access as the owner
+
+    # People who've accepted an invite -- get the same access as the owner
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS group_access (
             chat_id BIGINT,
@@ -68,7 +80,8 @@ def create_tables():
             PRIMARY KEY (chat_id, user_id)
         )
     """)
-    # Pending invites -- stored by username since we don't know their user_id yet
+
+    # Pending/resolved invites -- stored by username since we may not know their user_id yet
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS invitations (
             id SERIAL PRIMARY KEY,
@@ -79,10 +92,14 @@ def create_tables():
             created_at TIMESTAMP DEFAULT NOW()
         )
     """)
+
     conn.commit()
     cursor.close()
     conn.close()
+    print("Database ready!")
 
+
+# ---------- GROUPS ----------
 
 def save_group(chat_id, title, owner_id=None):
     conn = get_conn()
@@ -108,6 +125,9 @@ def delete_group(chat_id):
     cursor.execute("DELETE FROM groups WHERE chat_id = %s", (chat_id,))
     cursor.execute("DELETE FROM teammates WHERE chat_id = %s", (chat_id,))
     cursor.execute("DELETE FROM folder_maps WHERE chat_id = %s", (chat_id,))
+    cursor.execute("DELETE FROM group_access WHERE chat_id = %s", (chat_id,))
+    cursor.execute("DELETE FROM invitations WHERE chat_id = %s", (chat_id,))
+    cursor.execute("DELETE FROM action_cooldowns WHERE chat_id = %s", (chat_id,))
     conn.commit()
     cursor.close()
     conn.close()
@@ -123,16 +143,47 @@ def get_all_groups():
     return rows
 
 
-def get_groups_by_owner(owner_id):
+# ---------- ACCESS / PERMISSIONS ----------
+
+def is_authorized(chat_id, user_id):
+    """True if this user owns the group OR has accepted collaborator access."""
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT chat_id, title FROM groups WHERE owner_id = %s", (owner_id,))
+    cursor.execute("SELECT owner_id FROM groups WHERE chat_id = %s", (chat_id,))
+    row = cursor.fetchone()
+    if row is not None and row[0] == user_id:
+        cursor.close()
+        conn.close()
+        return True
+    cursor.execute(
+        "SELECT 1 FROM group_access WHERE chat_id = %s AND user_id = %s",
+        (chat_id, user_id)
+    )
+    has_access = cursor.fetchone() is not None
+    cursor.close()
+    conn.close()
+    return has_access
+
+
+def get_groups_for_user(user_id):
+    """Groups this user owns OR has accepted access to, tagged with their role."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT chat_id, title, 'owner' AS role FROM groups WHERE owner_id = %s
+        UNION
+        SELECT g.chat_id, g.title, 'collaborator' AS role
+        FROM group_access a JOIN groups g ON a.chat_id = g.chat_id
+        WHERE a.user_id = %s
+    """, (user_id, user_id))
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
     return rows
 
+
 def is_username_in_group(chat_id, username):
+    """Only allow inviting people who've actually been captured as members."""
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
@@ -144,15 +195,106 @@ def is_username_in_group(chat_id, username):
     conn.close()
     return exists
 
-def is_group_owner(chat_id, user_id):
+
+# ---------- INVITATIONS ----------
+
+def create_invitation(chat_id, invited_username, invited_by):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT owner_id FROM groups WHERE chat_id = %s", (chat_id,))
+    cursor.execute("""
+        INSERT INTO invitations (chat_id, invited_username, invited_by, status)
+        VALUES (%s, %s, %s, 'pending')
+    """, (chat_id, invited_username.lstrip("@").lower(), invited_by))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def can_invite_again(chat_id, username):
+    """Blocks inviting the same username to the same group more than once per 24h."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT created_at FROM invitations
+        WHERE chat_id = %s AND invited_username = %s
+        ORDER BY created_at DESC LIMIT 1
+    """, (chat_id, username.lower()))
     row = cursor.fetchone()
     cursor.close()
     conn.close()
-    return row is not None and row[0] == user_id
 
+    if row is None:
+        return True, 0
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    elapsed = (now - row[0]).total_seconds()
+    remaining = 86400 - elapsed  # 24 hours
+
+    if remaining > 0:
+        return False, int(remaining)
+    return True, 0
+
+
+def get_pending_invitations_for_username(username):
+    """Called when a user opens the Mini App -- checks if anyone invited their @username."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT i.id, i.chat_id, g.title, i.invited_by
+        FROM invitations i
+        JOIN groups g ON i.chat_id = g.chat_id
+        WHERE i.invited_username = %s AND i.status = 'pending'
+    """, (username.lower(),))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def get_invite_history(chat_id):
+    """Invitations sent in the last 24 hours for this group, most recent first."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT invited_username, status, created_at
+        FROM invitations
+        WHERE chat_id = %s AND created_at > NOW() - INTERVAL '24 hours'
+        ORDER BY created_at DESC
+    """, (chat_id,))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def respond_invitation(invitation_id, user_id, accept):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, status FROM invitations WHERE id = %s", (invitation_id,))
+    row = cursor.fetchone()
+    if row is None or row[1] != 'pending':
+        cursor.close()
+        conn.close()
+        return False
+
+    chat_id = row[0]
+    new_status = 'accepted' if accept else 'declined'
+    cursor.execute("UPDATE invitations SET status = %s WHERE id = %s", (new_status, invitation_id))
+
+    if accept:
+        cursor.execute("""
+            INSERT INTO group_access (chat_id, user_id, role)
+            VALUES (%s, %s, 'collaborator')
+            ON CONFLICT (chat_id, user_id) DO NOTHING
+        """, (chat_id, user_id))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return True
+
+
+# ---------- FOLDERS (unused by the Mini App currently, kept for compatibility) ----------
 
 def add_custom_folder(name, color):
     conn = get_conn()
@@ -207,6 +349,22 @@ def get_groups_by_folder(folder_id):
     return rows
 
 
+def remove_group_from_folder(chat_id, folder_id):
+    if folder_id is None:
+        return
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM folder_maps WHERE chat_id = %s AND folder_id = %s",
+        (chat_id, folder_id)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+# ---------- TEAMMATES ----------
+
 def save_teammate(telegram_id, chat_id, name, username, last_seen):
     conn = get_conn()
     cursor = conn.cursor()
@@ -251,50 +409,74 @@ def update_status(telegram_id, chat_id, status):
     conn.close()
 
 
-# Replace your current refresh_all_statuses loop with this updated query:
 def refresh_all_statuses():
+    """Recalculate active/quiet/ghosting for every teammate, using each group's own thresholds.
+    Also clears any cooldown the moment someone becomes active again."""
     conn = get_conn()
     cursor = conn.cursor()
-    # Grabs limits from the group table side-by-side with teammates
     cursor.execute("""
-        SELECT t.telegram_id, t.chat_id, t.last_seen, g.quiet_limit, g.ghost_limit 
+        SELECT t.telegram_id, t.chat_id, t.username, t.last_seen, g.quiet_limit, g.ghost_limit
         FROM teammates t
         JOIN groups g ON t.chat_id = g.chat_id
     """)
     rows = cursor.fetchall()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    for telegram_id, chat_id, last_seen_str, q_lim, g_lim in rows:
+
+    for telegram_id, chat_id, username, last_seen_str, quiet_limit, ghost_limit in rows:
         last_seen_time = datetime.strptime(last_seen_str, "%Y-%m-%d %H:%M:%S")
         seconds_inactive = (now - last_seen_time).total_seconds()
-        
-        if seconds_inactive >= g_lim:
+
+        quiet_limit = quiet_limit if quiet_limit is not None else DEFAULT_QUIET_LIMIT
+        ghost_limit = ghost_limit if ghost_limit is not None else DEFAULT_GHOST_LIMIT
+
+        if seconds_inactive >= ghost_limit:
             new_status = "ghosting"
-        elif seconds_inactive >= q_lim:
+        elif seconds_inactive >= quiet_limit:
             new_status = "quiet"
         else:
             new_status = "active"
-            
+
         cursor.execute(
             "UPDATE teammates SET status = %s WHERE telegram_id = %s AND chat_id = %s",
             (new_status, telegram_id, chat_id)
         )
+
+        # The moment someone is active again, their cooldown no longer applies --
+        # clear it so the next time they go quiet/ghosting, actions are available immediately.
+        if new_status == "active":
+            cursor.execute(
+                "DELETE FROM action_cooldowns WHERE chat_id = %s AND username = %s",
+                (chat_id, username)
+            )
+
     conn.commit()
     cursor.close()
     conn.close()
 
 
-def remove_group_from_folder(chat_id, folder_id):
-    if folder_id is None:
-        return
+def get_cooldowns_for_group(chat_id):
+    """Batch lookup: returns {username: seconds_remaining} for everyone currently on cooldown."""
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "DELETE FROM folder_maps WHERE chat_id = %s AND folder_id = %s",
-        (chat_id, folder_id)
+        "SELECT username, last_sent FROM action_cooldowns WHERE chat_id = %s",
+        (chat_id,)
     )
-    conn.commit()
+    rows = cursor.fetchall()
     cursor.close()
     conn.close()
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    result = {}
+    for username, last_sent in rows:
+        elapsed = (now - last_sent).total_seconds()
+        remaining = COOLDOWN_SECONDS - elapsed
+        if remaining > 0:
+            result[username] = int(remaining)
+    return result
+
+
+# ---------- ACTION COOLDOWNS ----------
 
 def check_cooldown(chat_id, username):
     """Returns (allowed: bool, seconds_remaining: int)."""
@@ -333,94 +515,3 @@ def record_action(chat_id, username):
     conn.commit()
     cursor.close()
     conn.close()
-
-def is_authorized(chat_id, user_id):
-    """True if this user owns the group OR has accepted collaborator access."""
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT owner_id FROM groups WHERE chat_id = %s", (chat_id,))
-    row = cursor.fetchone()
-    if row is not None and row[0] == user_id:
-        cursor.close()
-        conn.close()
-        return True
-    cursor.execute(
-        "SELECT 1 FROM group_access WHERE chat_id = %s AND user_id = %s",
-        (chat_id, user_id)
-    )
-    has_access = cursor.fetchone() is not None
-    cursor.close()
-    conn.close()
-    return has_access
-
-
-def get_groups_for_user(user_id):
-    """Groups this user owns OR has accepted access to, tagged with their role."""
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT chat_id, title, 'owner' AS role FROM groups WHERE owner_id = %s
-        UNION
-        SELECT g.chat_id, g.title, 'collaborator' AS role
-        FROM group_access a JOIN groups g ON a.chat_id = g.chat_id
-        WHERE a.user_id = %s
-    """, (user_id, user_id))
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return rows
-
-
-def create_invitation(chat_id, invited_username, invited_by):
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO invitations (chat_id, invited_username, invited_by, status)
-        VALUES (%s, %s, %s, 'pending')
-    """, (chat_id, invited_username.lstrip("@").lower(), invited_by))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-def get_pending_invitations_for_username(username):
-    """Called when a user opens the Mini App -- checks if anyone invited their @username."""
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT i.id, i.chat_id, g.title, i.invited_by
-        FROM invitations i
-        JOIN groups g ON i.chat_id = g.chat_id
-        WHERE i.invited_username = %s AND i.status = 'pending'
-    """, (username.lower(),))
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return rows
-
-
-def respond_invitation(invitation_id, user_id, accept):
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT chat_id, status FROM invitations WHERE id = %s", (invitation_id,))
-    row = cursor.fetchone()
-    if row is None or row[1] != 'pending':
-        cursor.close()
-        conn.close()
-        return False
-
-    chat_id = row[0]
-    new_status = 'accepted' if accept else 'declined'
-    cursor.execute("UPDATE invitations SET status = %s WHERE id = %s", (new_status, invitation_id))
-
-    if accept:
-        cursor.execute("""
-            INSERT INTO group_access (chat_id, user_id, role)
-            VALUES (%s, %s, 'collaborator')
-            ON CONFLICT (chat_id, user_id) DO NOTHING
-        """, (chat_id, user_id))
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return True
