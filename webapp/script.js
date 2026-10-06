@@ -12,16 +12,6 @@ let currentChatId = null;
 let currentTitle = null;
 let memberRowCache = {};
 
-// Helper to perform authenticated requests using Telegram initData
-async function tgFetch(url, options = {}) {
-  const headers = options.headers || {};
-  if (tg.initData) {
-    headers["X-Telegram-Init-Data"] = tg.initData;
-  }
-  options.headers = headers;
-  return fetch(url, options);
-}
-
 // ---------- THEME ----------
 function applyTheme(theme) {
   document.body.setAttribute("data-theme", theme);
@@ -39,19 +29,12 @@ function toggleTheme() {
   applyTheme(saved || (platformDark ? "dark" : "light"));
 })();
 
-// ---------- TOAST ----------
-// variant: "wake" (red), "nudge" (amber), "recovered" (green), "error", or null (neutral)
-function showToast(msg, variant) {
+// ---------- HELPERS ----------
+function showToast(msg, isError) {
   const t = document.getElementById("toast");
   t.textContent = msg;
-  let cls = "toast show";
-  if (variant === "wake") cls += " toast-wake";
-  else if (variant === "nudge") cls += " toast-nudge";
-  else if (variant === "recovered") cls += " toast-recovered";
-  else if (variant === "error") cls += " error";
-  t.className = cls;
-  clearTimeout(t._hideTimer);
-  t._hideTimer = setTimeout(() => t.classList.remove("show"), 2800);
+  t.className = "toast show" + (isError ? " error" : "");
+  setTimeout(() => t.classList.remove("show"), 2400);
 }
 
 function formatLastSeen(isoLike) {
@@ -65,12 +48,31 @@ function statusStyle(status) {
   return { cls: "status-ghosting", label: "Ghosting" };
 }
 
+function startButtonCooldown(btnEl, seconds, baseLabel) {
+  if (!btnEl) return;
+  let remaining = Math.max(1, Math.ceil(seconds));
+  btnEl.disabled = true;
+  btnEl.style.opacity = "0.5";
+  btnEl.textContent = `${baseLabel} (${remaining}s)`;
+  const interval = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(interval);
+      btnEl.disabled = false;
+      btnEl.style.opacity = "1";
+      btnEl.textContent = baseLabel;
+    } else {
+      btnEl.textContent = `${baseLabel} (${remaining}s)`;
+    }
+  }, 1000);
+}
+
 // ---------- INVITATIONS RECEIVED ----------
 async function loadInvitations() {
   const container = document.getElementById("invitations-view");
   if (!myUsername) { container.innerHTML = ""; return; }
 
-  const res = await tgFetch("/api/invitations");
+  const res = await fetch(`/api/invitations?username=${encodeURIComponent(myUsername)}`);
   const invites = await res.json();
 
   if (!invites.length) { container.innerHTML = ""; return; }
@@ -90,10 +92,10 @@ async function loadInvitations() {
 }
 
 async function respondInvite(invitationId, accept) {
-  const res = await tgFetch(`/api/invitations/${invitationId}/respond`, {
+  const res = await fetch(`/api/invitations/${invitationId}/respond`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accept }),
+    body: JSON.stringify({ user_id: userId, accept }),
   });
   const result = await res.json();
   if (result.ok) {
@@ -102,7 +104,7 @@ async function respondInvite(invitationId, accept) {
     loadInvitations();
     loadGroups();
   } else {
-    showToast("Something went wrong", "error");
+    showToast("Something went wrong", true);
   }
 }
 
@@ -111,7 +113,7 @@ async function loadGroups() {
   clearInterval(refreshTimer);
   memberRowCache = {};
   document.getElementById("invite-toggle").style.display = "none";
-  const res = await tgFetch("/api/groups");
+  const res = await fetch(`/api/groups?user_id=${userId}`);
   const groups = await res.json();
   document.getElementById("groups-view").style.display = "block";
   document.getElementById("members-view").style.display = "none";
@@ -178,12 +180,12 @@ function toggleInvitePanel() {
 async function sendInvite() {
   const input = document.getElementById("invite-username-input");
   const username = input.value.trim().replace(/^@/, "");
-  if (!username) { showToast("Enter a username first", "error"); return; }
+  if (!username) { showToast("Enter a username first", true); return; }
 
-  const res = await tgFetch("/api/invite", {
+  const res = await fetch("/api/invite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: currentChatId, username }),
+    body: JSON.stringify({ chat_id: currentChatId, username, user_id: userId }),
   });
   const result = await res.json();
 
@@ -195,7 +197,7 @@ async function sendInvite() {
     linkBox.textContent = `Share this link with them to open ChatWake: https://t.me/${BOT_USERNAME}/app`;
     loadInviteHistory();
   } else {
-    showToast(result.error || "Couldn't send invite", "error");
+    showToast(result.error || "Couldn't send invite", true);
   }
 }
 
@@ -206,23 +208,17 @@ function historyStatusLabel(status) {
 }
 
 async function loadInviteHistory() {
-  const res = await tgFetch(`/api/groups/${currentChatId}/invite-history`);
+  const res = await fetch(`/api/groups/${currentChatId}/invite-history?user_id=${userId}`);
   const history = await res.json();
   const box = document.getElementById("invite-history-list");
   if (!box) return;
 
-  const header = `
-    <div class="history-header">
-      <h4>Invitation History</h4>
-      <span class="history-reset-note">Resets every 24 hours</span>
-    </div>`;
-
   if (!history.length) {
-    box.innerHTML = header + `<div class="empty-msg" style="margin-top:4px; font-size:12px;">No invites sent in the last 24 hours.</div>`;
+    box.innerHTML = `<div class="empty-msg" style="margin-top:10px; font-size:12px;">No invites sent in the last 24 hours.</div>`;
     return;
   }
 
-  box.innerHTML = header + history.map(h => {
+  box.innerHTML = history.map(h => {
     const s = historyStatusLabel(h.status);
     return `
       <div class="history-row">
@@ -232,29 +228,18 @@ async function loadInviteHistory() {
   }).join("");
 }
 
-// ---------- MEMBERS ----------
-
-// Builds the correct action button for the CURRENT status, honoring server-reported cooldown.
-function actionButtonHtml(chatId, username, status, cooldownRemaining) {
-  const onCooldown = cooldownRemaining && cooldownRemaining > 0;
-
+function actionButtonHtml(chatId, username, status) {
   if (status === "ghosting") {
-    const label = onCooldown ? `Wake Up (${cooldownRemaining}s)` : "Wake Up";
-    const disabledAttr = onCooldown ? "disabled" : "";
-    return `<button class="btn-ghost" ${disabledAttr} style="${onCooldown ? 'opacity:0.5;' : ''}"
-              onclick="act('wakeup-single',${chatId},'${username}', this)">${label}</button>`;
+    return `<button class="btn-ghost" onclick="act('wakeup-single',${chatId},'${username}', this)">Wake Up</button>`;
   }
   if (status === "quiet") {
-    const label = onCooldown ? `Nudge (${cooldownRemaining}s)` : "Nudge";
-    const disabledAttr = onCooldown ? "disabled" : "";
-    return `<button class="btn-quiet-action" ${disabledAttr} style="${onCooldown ? 'opacity:0.5;' : ''}"
-              onclick="act('nudge-single',${chatId},'${username}', this)">${label}</button>`;
+    return `<button class="btn-quiet-action" onclick="act('nudge-single',${chatId},'${username}', this)">Nudge</button>`;
   }
-  return ""; // active -- no button
+  return "";
 }
 
 async function loadMembers() {
-  const res = await tgFetch(`/api/groups/${currentChatId}/members`);
+  const res = await fetch(`/api/groups/${currentChatId}/members?user_id=${userId}`);
   const members = await res.json();
   const list = document.getElementById("member-list");
   if (!list) return;
@@ -276,7 +261,6 @@ async function loadMembers() {
   members.forEach(m => {
     const cached = memberRowCache[m.telegram_id];
     const s = statusStyle(m.status);
-    const cooldown = m.cooldown_remaining || 0;
 
     if (!cached) {
       const el = document.createElement("div");
@@ -290,7 +274,7 @@ async function loadMembers() {
             <span class="last-seen">Last reply: ${formatLastSeen(m.last_seen)}</span>
           </div>
         </div>
-        <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status, cooldown)}</span>
+        <span class="action-slot">${actionButtonHtml(currentChatId, m.username, m.status)}</span>
       `;
       list.appendChild(el);
       memberRowCache[m.telegram_id] = {
@@ -302,21 +286,15 @@ async function loadMembers() {
         lastSeenValue: m.last_seen,
       };
     } else {
-      // Detect recovery: was quiet/ghosting, now active -- green confirmation toast
-      if (cached.lastStatus !== "active" && m.status === "active") {
-        showToast(`${m.name} is active again`, "recovered");
-      }
-
       if (cached.lastStatus !== m.status) {
         cached.statusRow.className = `status-row ${s.cls}`;
         cached.statusRow.innerHTML = `<span class="dot"></span>${s.label}`;
+        const existingBtn = cached.actionSlot.querySelector("button");
+        if (!existingBtn || !existingBtn.disabled) {
+          cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status);
+        }
         cached.lastStatus = m.status;
       }
-
-      // Action button is always rebuilt from current status + server cooldown truth,
-      // so it can never go stale across polls or page navigation.
-      cached.actionSlot.innerHTML = actionButtonHtml(currentChatId, m.username, m.status, cooldown);
-
       if (cached.lastSeenValue !== m.last_seen) {
         cached.lastSeenEl.textContent = `Last reply: ${formatLastSeen(m.last_seen)}`;
         cached.lastSeenValue = m.last_seen;
@@ -334,13 +312,15 @@ function goBack() {
 
 async function act(type, chatId, username, btnEl) {
   let endpoint, body;
-  if (type === "wakeup-single") { endpoint = "/api/wakeup"; body = { chat_id: chatId, username }; }
-  if (type === "nudge-single")  { endpoint = "/api/nudge";  body = { chat_id: chatId, username }; }
-  if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId }; }
-  if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId }; }
+  if (type === "wakeup-single") { endpoint = "/api/wakeup"; body = { chat_id: chatId, username, user_id: userId }; }
+  if (type === "nudge-single")  { endpoint = "/api/nudge";  body = { chat_id: chatId, username, user_id: userId }; }
+  if (type === "wakeup-all")    { endpoint = "/api/wakeup-all"; body = { chat_id: chatId, user_id: userId }; }
+  if (type === "nudge-all")     { endpoint = "/api/nudge-all";  body = { chat_id: chatId, user_id: userId }; }
+
+  const originalLabel = btnEl ? btnEl.textContent : "";
 
   try {
-    const res = await tgFetch(endpoint, {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -348,20 +328,20 @@ async function act(type, chatId, username, btnEl) {
     const result = await res.json();
 
     if (!res.ok || result.ok === false) {
-      showToast(result.error || "Action failed.", "error");
-      loadMembers(); // pull fresh server cooldown state immediately, even on failure
+      if (result.cooldown && btnEl) startButtonCooldown(btnEl, result.cooldown, originalLabel);
+      showToast(result.error || "Action failed.", true);
       return;
     }
 
     tg.HapticFeedback.notificationOccurred("success");
-    if (type === "wakeup-single") showToast(`Wake-up sent to ${username}`, "wake");
-    if (type === "nudge-single")  showToast(`Nudge sent to ${username}`, "nudge");
-    if (type === "wakeup-all")    showToast(result.count ? `Woke up ${result.count} member(s)` : "No one eligible right now", "wake");
-    if (type === "nudge-all")     showToast(result.count ? `Nudged ${result.count} member(s)` : "No one eligible right now", "nudge");
+    if (type === "wakeup-single") { showToast(`Woke up ${username}`); startButtonCooldown(btnEl, 120, "Wake Up"); }
+    if (type === "nudge-single")  { showToast(`Nudged ${username}`); startButtonCooldown(btnEl, 120, "Nudge"); }
+    if (type === "wakeup-all")    { showToast(result.count ? `Woke up ${result.count} member(s)` : "No one eligible right now"); startButtonCooldown(btnEl, 120, "Wake All Ghosts"); }
+    if (type === "nudge-all")     { showToast(result.count ? `Nudged ${result.count} member(s)` : "No one eligible right now"); startButtonCooldown(btnEl, 120, "Nudge All Quiet"); }
 
     loadMembers();
   } catch (e) {
-    showToast("Network error -- action may not have sent.", "error");
+    showToast("Network error -- action may not have sent.", true);
   }
 }
 
